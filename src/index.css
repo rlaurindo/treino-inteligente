@@ -1,0 +1,9 @@
+@import "tailwindcss";
+
+@theme {
+  --color-brand-neon: #cbff01;
+  --color-brand-bg: #050505;
+  --color-brand-card: #111111;
+  --color-brand-border: #1a1a1a;
+  --color-brand-border-muted: #2a2a2a;
+}

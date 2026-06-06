@@ -1,0 +1,6 @@
+{
+  "name": "Treinos Personalizados",
+  "description": "Gere treinos de musculação personalizados com IA, monitore seu progresso com gráficos e sincronize seus dispositivos vestíveis.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

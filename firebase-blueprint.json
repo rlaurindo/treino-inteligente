@@ -1,0 +1,132 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "User profile with bio-metrics and preferences",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string" },
+        "name": { "type": "string" },
+        "experienceLevel": { "type": "string", "enum": ["Iniciante", "Intermediário", "Avançado"] },
+        "objective": { "type": "string" },
+        "avatar": { "type": "string" },
+        "isPremium": { "type": "boolean" },
+        "streak": { "type": "integer" },
+        "role": { "type": "string", "enum": ["aluno", "treinador"] },
+        "studentId": { "type": "string" },
+        "accessCount": { "type": "integer" },
+        "subscribedPlan": { "type": "string" },
+        "subscribedPrice": { "type": "string" },
+        "age": { "type": "integer" },
+        "weight": { "type": "number" },
+        "height": { "type": "number" },
+        "healthConditions": { "type": "string" },
+        "lgpdConsent": { "type": "boolean" },
+        "lgpdConsentDate": { "type": "string" }
+      },
+      "required": ["email", "name"]
+    },
+    "WorkoutRoutine": {
+      "title": "WorkoutRoutine",
+      "description": "A workout routine prescribed or generated",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "level": { "type": "string" },
+        "objective": { "type": "string" },
+        "focus": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "exercises": { "type": "array" }
+      },
+      "required": ["id", "title", "createdAt"]
+    },
+    "TrainingLog": {
+      "title": "TrainingLog",
+      "description": "Log of a completed workout session",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "date": { "type": "string" },
+        "routineId": { "type": "string" },
+        "routineTitle": { "type": "string" },
+        "durationMinutes": { "type": "number" },
+        "caloriesBurned": { "type": "number" },
+        "avgHeartRate": { "type": "number" },
+        "rating": { "type": "integer" },
+        "totalExercisesCompleted": { "type": "integer" },
+        "totalExercisesCount": { "type": "integer" }
+      },
+      "required": ["id", "date", "routineId", "routineTitle"]
+    },
+    "WearableStats": {
+      "title": "WearableStats",
+      "description": "Synced steps, heartrate, and active calories from wearable smartwatch device",
+      "type": "object",
+      "properties": {
+        "connected": { "type": "boolean" },
+        "deviceType": { "type": "string", "enum": ["Apple Watch", "Garmin", "Fitbit", "Nenhum"] },
+        "steps": { "type": "integer" },
+        "heartRate": { "type": "integer" },
+        "activeCalories": { "type": "integer" },
+        "syncTime": { "type": "string" }
+      },
+      "required": ["connected", "deviceType"]
+    },
+    "NotificationSettings": {
+      "title": "NotificationSettings",
+      "description": "Notification active states, time, and custom message preferences",
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "time": { "type": "string" },
+        "notifyOnDays": { "type": "array" },
+        "message": { "type": "string" }
+      },
+      "required": ["enabled", "time"]
+    },
+    "Achievement": {
+      "title": "Achievement",
+      "description": "Community feed accomplishments, posts, and announcements",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userName": { "type": "string" },
+        "userAvatar": { "type": "string" },
+        "type": { "type": "string", "enum": ["streak", "heavy_lift", "workout_completed", "premium_join"] },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "timestamp": { "type": "string" },
+        "likes": { "type": "integer" },
+        "likedByUser": { "type": "boolean" }
+      },
+      "required": ["id", "userName", "type", "title", "description", "timestamp"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "Main user settings and identity profile info"
+    },
+    "/users/{userId}/routines/{routineId}": {
+      "schema": "WorkoutRoutine",
+      "description": "Assigned split plans, personal generated trainings and routines"
+    },
+    "/users/{userId}/logs/{logId}": {
+      "schema": "TrainingLog",
+      "description": "Every fitness event of real exercises finished"
+    },
+    "/users/{userId}/wearable/stats": {
+      "schema": "WearableStats",
+      "description": "Smart watch synchronization health tracker values"
+    },
+    "/users/{userId}/notifications/settings": {
+      "schema": "NotificationSettings",
+      "description": "Daily notifications configurations"
+    },
+    "/achievements/{achievementId}": {
+      "schema": "Achievement",
+      "description": "Federated social community elements shown to all registered members"
+    }
+  }
+}

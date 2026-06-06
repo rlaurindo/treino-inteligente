@@ -1,0 +1,129 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // 1. Global Default Deny Catch-All
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- reusable helper functions ---
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && (
+        request.auth.uid == userId || 
+        (request.auth.token.email != null && request.auth.token.email.lower() == userId.lower()) ||
+        (resource != null && resource.data.keys().hasAll(['firebaseUid']) && resource.data.firebaseUid == request.auth.uid) ||
+        (request.resource != null && request.resource.data.keys().hasAll(['firebaseUid']) && request.resource.data.firebaseUid == request.auth.uid)
+      );
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isValidUserProfile(data) {
+      return data.email is string 
+        && data.email.size() <= 100
+        && data.name is string 
+        && data.name.size() <= 150
+        && (data.role == 'aluno' || data.role == 'treinador')
+        && (!data.keys().hasAny(['age']) || data.age is int)
+        && (!data.keys().hasAny(['weight']) || data.weight is number)
+        && (!data.keys().hasAny(['height']) || data.height is number)
+        && (!data.keys().hasAny(['streak']) || data.streak is int)
+        && (!data.keys().hasAny(['experienceLevel']) || data.experienceLevel is string)
+        && (!data.keys().hasAny(['firebaseUid']) || data.firebaseUid is string);
+    }
+
+    function isValidWorkoutRoutine(data) {
+      return data.id is string
+        && data.id.size() <= 128
+        && data.title is string
+        && data.title.size() <= 150
+        && data.exercises is list;
+    }
+
+    function isValidTrainingLog(data) {
+      return data.id is string
+        && data.id.size() <= 128
+        && data.routineId is string
+        && data.routineTitle is string
+        && data.routineTitle.size() <= 150
+        && data.durationMinutes is number
+        && data.caloriesBurned is number;
+    }
+
+    function isValidAchievement(data) {
+      return data.id is string
+        && data.id.size() <= 128
+        && data.userName is string
+        && data.userName.size() <= 150
+        && data.type is string
+        && data.title is string
+        && data.title.size() <= 150
+        && data.description is string
+        && data.description.size() <= 500;
+    }
+
+    // --- match rules ---
+
+    // USERS COLLECTION
+    match /users/{userId} {
+      allow get: if isSignedIn() && (isOwner(userId) || (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'treinador'));
+      allow list: if isSignedIn() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'treinador';
+      
+      allow create: if isOwner(userId) && isValidUserProfile(incoming());
+      allow update: if isOwner(userId) && isValidUserProfile(incoming()) && incoming().role == existing().role;
+      allow delete: if false;
+
+      // ROUTINES SUBCOLLECTION
+      match /routines/{routineId} {
+        allow read: if isOwner(userId) || (isSignedIn() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'treinador');
+        allow create, update: if (isOwner(userId) || (isSignedIn() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'treinador')) && isValidWorkoutRoutine(incoming());
+        allow delete: if isOwner(userId) || (isSignedIn() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'treinador');
+      }
+
+      // LOGS SUBCOLLECTION
+      match /logs/{logId} {
+        allow read: if isOwner(userId) || (isSignedIn() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'treinador');
+        allow create: if isOwner(userId) && isValidTrainingLog(incoming());
+        allow update: if isOwner(userId) && isValidTrainingLog(incoming());
+        allow delete: if isOwner(userId);
+      }
+
+      // WEARABLE SUBCOLLECTION OR DOC
+      match /wearable/{docId} {
+        allow read, write: if isOwner(userId);
+      }
+
+      // NOTIFICATIONS SUBCOLLECTION OR DOC
+      match /notifications/{docId} {
+        allow read, write: if isOwner(userId);
+      }
+    }
+
+    // ACHIEVEMENTS (COMMUNITY PLATES)
+    match /achievements/{achievementId} {
+      allow read, list: if isSignedIn();
+      allow create: if isSignedIn() && isValidAchievement(incoming());
+      allow update: if isSignedIn() && (
+        // Liking actions
+        incoming().diff(existing()).affectedKeys().hasOnly(['likes', 'likedByUser'])
+      );
+      allow delete: if isSignedIn() && existing().userName == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.name;
+    }
+  }
+}
