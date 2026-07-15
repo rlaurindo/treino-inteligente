@@ -1,13 +1,276 @@
 <!doctype html>
-<html lang="en">
+<html lang="pt-PT">
   <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Treino Inteligente • Personal Trainer</title>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>RLL Solutions | Automate, Optimize, Grow</title>
+    <meta
+      name="description"
+      content="Portfólio comercial da RLL Solutions: automação, sistemas de gestão, dashboards e aplicações digitais para empresas que querem crescer com controlo."
+    />
+    <meta property="og:title" content="RLL Solutions | Automate, Optimize, Grow" />
+    <meta
+      property="og:description"
+      content="Sistemas de gestão, dashboards, automações e aplicações digitais para empresas que querem vender melhor e operar com mais controlo."
+    />
+    <meta property="og:type" content="website" />
+    <meta property="og:image" content="assets/rll-logo-wall.png" />
+    <meta name="theme-color" content="#030712" />
+    <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
+    <header class="site-header" data-header>
+      <a class="brand" href="#top" aria-label="RLL Solutions">
+        <span class="brand-mark">R</span>
+        <span>
+          <strong>RLL Solutions</strong>
+          <small>Automate • Optimize • Grow</small>
+        </span>
+      </a>
+      <nav class="nav" aria-label="Navegação principal">
+        <a href="#solucoes">Soluções</a>
+        <a href="#portfolio">Portfólio</a>
+        <a href="#processo">Processo</a>
+        <a href="#contacto">Contacto</a>
+      </nav>
+      <a class="header-cta" href="#contacto">Pedir proposta</a>
+    </header>
+
+    <main id="top">
+      <section class="hero" aria-label="Apresentação RLL Solutions">
+        <img class="hero-media" src="assets/rll-logo-wall.png" alt="Logótipo RLL Solutions numa parede de escritório" />
+        <div class="hero-overlay"></div>
+        <div class="hero-content">
+          <p class="eyebrow">Software à medida para negócios em crescimento</p>
+          <h1>Transformamos processos manuais em plataformas digitais que vendem, organizam e escalam.</h1>
+          <p class="hero-copy">
+            Criamos sistemas web, dashboards financeiros, automações e aplicações para empresas que precisam de mais
+            controlo operacional, melhor experiência para clientes e decisões apoiadas por dados.
+          </p>
+          <div class="hero-actions">
+            <a class="button primary" href="#portfolio">Ver trabalhos</a>
+            <a class="button ghost" href="#contacto">Falar sobre projeto</a>
+          </div>
+        </div>
+      </section>
+
+      <section class="proof-strip" aria-label="Indicadores de experiência">
+        <div>
+          <strong>Dashboards</strong>
+          <span>Financeiro, agenda, stock e performance</span>
+        </div>
+        <div>
+          <strong>Automação</strong>
+          <span>Fluxos, lembretes, relatórios e operações</span>
+        </div>
+        <div>
+          <strong>Apps</strong>
+          <span>Experiências para clientes, equipas e gestores</span>
+        </div>
+        <div>
+          <strong>Negócio</strong>
+          <span>Soluções desenhadas para captar e reter clientes</span>
+        </div>
+      </section>
+
+      <section class="section intro" id="solucoes">
+        <div class="section-heading">
+          <p class="eyebrow">O que fazemos</p>
+          <h2>Sistemas completos para empresas que querem trabalhar com mais clareza.</h2>
+        </div>
+        <div class="growth-banner">
+          <strong>Oferta de entrada para novos clientes</strong>
+          <span>Diagnóstico gratuito de processos: avaliamos onde a sua empresa perde tempo, dinheiro ou oportunidades.</span>
+          <a href="#contacto">Agendar diagnóstico</a>
+        </div>
+        <div class="service-grid">
+          <article class="service-card">
+            <span class="icon" aria-hidden="true">↗</span>
+            <h3>Plataformas de gestão</h3>
+            <p>Agenda, clientes, equipa, pagamentos, stock, relatórios e permissões num único ambiente profissional.</p>
+          </article>
+          <article class="service-card">
+            <span class="icon" aria-hidden="true">€</span>
+            <h3>Dashboards financeiros</h3>
+            <p>Controlo de entradas, saídas, fluxo de caixa, rankings, metas e indicadores prontos para decisão.</p>
+          </article>
+          <article class="service-card">
+            <span class="icon" aria-hidden="true">✦</span>
+            <h3>Automação operacional</h3>
+            <p>Lembretes, notificações, relatórios automáticos e processos que reduzem tarefas repetitivas.</p>
+          </article>
+          <article class="service-card">
+            <span class="icon" aria-hidden="true">▣</span>
+            <h3>Aplicações digitais</h3>
+            <p>Portais para clientes, apps web responsivas, áreas premium e interfaces pensadas para uso diário.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="section portfolio" id="portfolio">
+        <div class="section-heading wide">
+          <p class="eyebrow">Portfólio</p>
+          <h2>Produtos digitais já desenhados para resolver problemas reais.</h2>
+          <p>
+            Cada projeto combina interface, lógica de negócio e visão comercial: o objetivo não é apenas parecer bem,
+            é ajudar a empresa a vender melhor e operar com menos fricção.
+          </p>
+        </div>
+
+        <div class="filter-bar" role="tablist" aria-label="Filtrar portfólio">
+          <button class="filter active" type="button" data-filter="all">Todos</button>
+          <button class="filter" type="button" data-filter="gestao">Gestão</button>
+          <button class="filter" type="button" data-filter="fitness">Fitness</button>
+          <button class="filter" type="button" data-filter="financeiro">Financeiro</button>
+        </div>
+
+        <div class="case-grid">
+          <article class="case-card featured" data-category="financeiro gestao">
+            <img src="assets/finance-dashboard.png" alt="Dashboard financeiro RLL Finance Hub" />
+            <div class="case-content">
+              <p class="tag">Finance Hub</p>
+              <h3>Controlo financeiro para operações multi-cidade</h3>
+              <p>
+                Painel com saldo mensal, entradas, despesas, fluxo de caixa, performance por cidade e ranking de
+                atendimento para equipas comerciais.
+              </p>
+            </div>
+          </article>
+
+          <article class="case-card" data-category="gestao financeiro">
+            <img src="assets/barber-agenda.png" alt="Agenda de atendimentos para barbearia" />
+            <div class="case-content">
+              <p class="tag orange">Elite Barber</p>
+              <h3>Agenda operacional para serviços presenciais</h3>
+              <p>Gestão de marcações, clientes, barbeiros, estados de atendimento, lembretes e faturação diária.</p>
+            </div>
+          </article>
+
+          <article class="case-card" data-category="financeiro gestao">
+            <img src="assets/barber-finance.png" alt="Relatórios financeiros para barbearia" />
+            <div class="case-content">
+              <p class="tag orange">Relatórios</p>
+              <h3>Visão financeira com metas e desempenho de equipa</h3>
+              <p>Indicadores de receita, formas de pagamento, evolução diária, serviços mais vendidos e comissão.</p>
+            </div>
+          </article>
+
+          <article class="case-card poster" data-category="fitness">
+            <img src="assets/treino-poster.png" alt="Material promocional do Treino Inteligente" />
+            <div class="case-content">
+              <p class="tag green">Treino Inteligente</p>
+              <h3>Produto digital para personal trainers e alunos</h3>
+              <p>Experiência premium com treino, pagamentos, vídeos, evolução e acompanhamento numa só plataforma.</p>
+            </div>
+          </article>
+
+          <article class="case-card" data-category="fitness gestao">
+            <img src="assets/treino-trainer.png" alt="Painel de controlo de alunos para personal trainer" />
+            <div class="case-content">
+              <p class="tag green">Coach Panel</p>
+              <h3>Gestão de alunos, planos e convites</h3>
+              <p>Área de treinador com faturação mensal, alunos ativos, links de convite e diretório completo.</p>
+            </div>
+          </article>
+
+          <article class="case-card" data-category="fitness">
+            <img src="assets/treino-plano.png" alt="Plano de treino especializado" />
+            <div class="case-content">
+              <p class="tag green">Training App</p>
+              <h3>Planos de treino com impressão e uso offline</h3>
+              <p>Rotinas por nível, carga, séries, descanso, guias de execução e versão PDF para acompanhamento.</p>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section class="section split" id="processo">
+        <div class="section-heading">
+          <p class="eyebrow">Como trabalhamos</p>
+          <h2>Da ideia ao sistema em produção, com foco no resultado comercial.</h2>
+        </div>
+        <div class="process-list">
+          <article>
+            <span>01</span>
+            <h3>Diagnóstico</h3>
+            <p>Mapeamos o processo atual, gargalos, metas e o que precisa de ser medido para vender ou operar melhor.</p>
+          </article>
+          <article>
+            <span>02</span>
+            <h3>Protótipo</h3>
+            <p>Desenhamos os fluxos principais e validamos a experiência antes de avançar para o desenvolvimento.</p>
+          </article>
+          <article>
+            <span>03</span>
+            <h3>Construção</h3>
+            <p>Implementamos interface, base de dados, autenticação, dashboards, automações e integrações essenciais.</p>
+          </article>
+          <article>
+            <span>04</span>
+            <h3>Evolução</h3>
+            <p>Acompanhamos métricas, ajustamos funcionalidades e preparamos novas fases conforme o negócio cresce.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="cta-section" id="contacto">
+        <div>
+          <p class="eyebrow">Vamos criar o seu próximo sistema</p>
+          <h2>Se a sua empresa ainda gere clientes, pagamentos ou relatórios manualmente, há oportunidade de crescer.</h2>
+          <p>
+            A RLL Solutions pode desenhar uma plataforma personalizada para o seu negócio, com uma presença digital
+            profissional e ferramentas que aumentam a produtividade.
+          </p>
+        </div>
+        <form class="contact-form" aria-label="Pedido de contacto">
+          <label>
+            Nome
+            <input type="text" name="nome" placeholder="O seu nome" />
+          </label>
+          <label>
+            Empresa
+            <input type="text" name="empresa" placeholder="Nome da empresa" />
+          </label>
+          <label>
+            Objetivo
+            <select name="objetivo">
+              <option>Quero criar um sistema de gestão</option>
+              <option>Quero automatizar processos</option>
+              <option>Quero um dashboard financeiro</option>
+              <option>Quero uma aplicação para clientes</option>
+            </select>
+          </label>
+          <label>
+            Mensagem
+            <textarea name="mensagem" rows="4" placeholder="Conte-nos o que pretende resolver"></textarea>
+          </label>
+          <div class="form-actions">
+            <button class="button primary" type="submit">Enviar por WhatsApp</button>
+            <a class="button mail" href="mailto:rllautomations@gmail.com?subject=Pedido%20de%20proposta%20-%20RLL%20Solutions"
+              >Enviar por email</a
+            >
+          </div>
+          <p class="form-note" data-form-note>
+            Configure o número de WhatsApp no ficheiro script.js para ativar o envio direto.
+          </p>
+        </form>
+      </section>
+    </main>
+
+    <a class="floating-contact" href="#contacto" aria-label="Contactar RLL Solutions">
+      <span>Contactar</span>
+    </a>
+
+    <footer class="footer">
+      <strong>RLL Solutions</strong>
+      <span>Automate • Optimize • Grow</span>
+      <a href="mailto:rllautomations@gmail.com">rllautomations@gmail.com</a>
+      <a class="zaask-link" target="_blank" rel="noopener noreferrer" href="https://www.zaask.pt/user/rllautomations">
+        <img src="https://www.zaask.pt/widget?user=1055511&widget=review" alt="RLL Solutions na Zaask" />
+      </a>
+      <a href="#top">Voltar ao topo</a>
+    </footer>
+
+    <script src="script.js"></script>
   </body>
 </html>
-
