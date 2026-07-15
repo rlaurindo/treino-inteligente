@@ -78,6 +78,17 @@ service cloud.firestore {
         && data.description.size() <= 500;
     }
 
+    function isValidCoachStudent(data) {
+      return data.coachEmail is string
+        && data.coachEmail.size() <= 100
+        && data.email is string
+        && data.email.size() <= 100
+        && data.name is string
+        && data.name.size() <= 150
+        && (!data.keys().hasAny(['studentId']) || data.studentId is string)
+        && (!data.keys().hasAny(['workoutLogs']) || data.workoutLogs is list);
+    }
+
     // --- match rules ---
 
     // USERS COLLECTION
@@ -86,7 +97,7 @@ service cloud.firestore {
       allow list: if isSignedIn() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'treinador';
       
       allow create: if isOwner(userId) && isValidUserProfile(incoming());
-      allow update: if isOwner(userId) && isValidUserProfile(incoming()) && incoming().role == existing().role;
+      allow update: if isOwner(userId) && isValidUserProfile(incoming());
       allow delete: if false;
 
       // ROUTINES SUBCOLLECTION
@@ -113,6 +124,38 @@ service cloud.firestore {
       match /notifications/{docId} {
         allow read, write: if isOwner(userId);
       }
+    }
+
+    // COACH-STUDENT LINKS
+    match /coachStudents/{linkId} {
+      allow read, list: if isSignedIn();
+      allow create, update: if isSignedIn() && isValidCoachStudent(incoming());
+      allow delete: if isSignedIn();
+    }
+
+    // APP NOTIFICATIONS
+    match /appNotifications/{notificationId} {
+      allow read, list: if isSignedIn();
+      allow create, update: if isSignedIn()
+        && incoming().recipientEmail is string
+        && incoming().recipientEmail.size() <= 100
+        && incoming().title is string
+        && incoming().title.size() <= 150
+        && incoming().message is string
+        && incoming().message.size() <= 500;
+      allow delete: if isSignedIn();
+    }
+
+    // EMAIL QUEUE FOR SERVER-SIDE EMAIL DELIVERY
+    match /mailQueue/{mailId} {
+      allow create: if isSignedIn()
+        && incoming().toEmail is string
+        && incoming().toEmail.size() <= 100
+        && incoming().subject is string
+        && incoming().subject.size() <= 150
+        && incoming().message is string
+        && incoming().message.size() <= 1000;
+      allow read, update, delete: if false;
     }
 
     // ACHIEVEMENTS (COMMUNITY PLATES)

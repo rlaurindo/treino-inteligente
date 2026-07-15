@@ -173,6 +173,9 @@ export default function AuthScreen({ onLoginSuccess, darkMode }: AuthScreenProps
         subscribedPrice: refCoach
           ? '€0,00'
           : selectedPlan?.price || (role === 'treinador' ? '€29,90/mês' : '€5,99/mês'),
+        coachEmail: refCoach || undefined,
+        coachName: refCoach || undefined,
+        coachLinked: !!refCoach,
         age: isStudent && age ? parseInt(age) : undefined,
         weight: isStudent && weight ? parseFloat(weight) : undefined,
         height: isStudent && height ? parseFloat(height) : undefined,
@@ -210,6 +213,9 @@ export default function AuthScreen({ onLoginSuccess, darkMode }: AuthScreenProps
         subscribedPrice: refCoach
           ? '€0,00'
           : selectedPlan?.price || (role === 'treinador' ? '€29,90/mês' : '€5,99/mês'),
+        coachEmail: refCoach || undefined,
+        coachName: refCoach || undefined,
+        coachLinked: !!refCoach,
         age: isStudent && age ? parseInt(age) : undefined,
         weight: isStudent && weight ? parseFloat(weight) : undefined,
         height: isStudent && height ? parseFloat(height) : undefined,
@@ -256,6 +262,9 @@ export default function AuthScreen({ onLoginSuccess, darkMode }: AuthScreenProps
         subscribedPrice: refCoach
           ? '€0,00'
           : selectedPlan?.price || (role === 'treinador' ? '€29,90/mês' : '€5,99/mês'),
+        coachEmail: refCoach || undefined,
+        coachName: refCoach || undefined,
+        coachLinked: !!refCoach,
         lgpdConsent: lgpdConsent,
         lgpdConsentDate: lgpdConsent ? new Date().toISOString() : undefined
       };

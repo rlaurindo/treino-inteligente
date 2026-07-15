@@ -1,12 +1,23 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { 
+import {
   Users, TrendingUp, DollarSign, Search, PlusCircle, 
   ChevronRight, Dumbbell, Award, Flame, MessageSquare, 
   Calendar, Check, UserPlus, Trash, Sparkles, Filter, CheckCircle, HelpCircle,
   ArrowLeft, Copy, Shield
 } from 'lucide-react';
-import { UserProfile, TrainingLog } from '../types';
+import { UserProfile, TrainingLog, WorkoutRoutine } from '../types';
+import {
+  createAppNotification,
+  deleteCoachStudent,
+  getUserProfile,
+  loadCoachStudents,
+  publishPrescribedRoutineToCoachStudent,
+  queueWorkoutPublishedEmail,
+  saveUserProfile,
+  saveWorkoutRoutine,
+  upsertCoachStudent
+} from '../services/db';
 
 interface Student {
   id: string;
@@ -33,9 +44,11 @@ interface Student {
   healthConditions?: string;
   lgpdConsent?: boolean;
   lgpdConsentDate?: string;
+  prescribedRoutine?: WorkoutRoutine;
 }
 
 interface TrainerPanelProps {
+  user: UserProfile;
   darkMode: boolean;
 }
 
@@ -162,10 +175,33 @@ const DEFAULT_STUDENTS: Student[] = [
   }
 ];
 
-export default function TrainerPanel({ darkMode }: TrainerPanelProps) {
+function getStudentMergeKey(student: Pick<Student, 'id' | 'studentId' | 'email'>) {
+  return (student.studentId || student.id || student.email).trim().toLowerCase();
+}
+
+function normalizeCloudStudent(student: any): Student {
+  return {
+    ...student,
+    id: student.id || student.studentId || student.email,
+    studentId: student.studentId || student.id,
+    avatar: student.avatar || `https://api.dicebear.com/7.x/bottts/svg?seed=${encodeURIComponent(student.name || student.email || 'aluno')}`,
+    experienceLevel: student.experienceLevel || 'Iniciante',
+    objective: student.objective || 'Hipertrofia',
+    streak: student.streak || 1,
+    consistencyScore: student.consistencyScore || 80,
+    status: student.status || 'Normal',
+    lastWorkoutDate: student.lastWorkoutDate || new Date().toISOString(),
+    workoutLogs: student.workoutLogs || [],
+    isActive: student.isActive !== false,
+    pricingType: student.pricingType || 'mensal',
+    pricingValue: typeof student.pricingValue === 'number' ? student.pricingValue : 50
+  };
+}
+
+export default function TrainerPanel({ user, darkMode }: TrainerPanelProps) {
   const [students, setStudents] = useState<Student[]>(() => {
     const saved = localStorage.getItem('treino_trainer_students');
-    return saved ? JSON.parse(saved) : DEFAULT_STUDENTS;
+    return saved ? JSON.parse(saved) : [];
   });
 
   const [pricePerStudent, setPricePerStudent] = useState<number>(() => {
@@ -228,19 +264,39 @@ export default function TrainerPanel({ darkMode }: TrainerPanelProps) {
 
   const handleSaveClinical = () => {
     if (!selectedStudent) return;
+    let updatedStudent: Student | null = null;
     const updated = students.map(st => {
       if (st.id === selectedStudent.id) {
-        return {
+        updatedStudent = {
           ...st,
           age: editAge ? parseInt(editAge) : undefined,
           weight: editWeight ? parseFloat(editWeight) : undefined,
           height: editHeight ? parseFloat(editHeight) : undefined,
           healthConditions: editHealth
         };
+        return updatedStudent;
       }
       return st;
     });
     setStudents(updated);
+    setSelectedStudent(updated.find(x => x.id === selectedStudent.id) || null);
+    if (trainerEmail.trim() && updatedStudent) {
+      upsertCoachStudent(trainerEmail, updatedStudent).catch(console.error);
+    }
+    if (updatedStudent?.email) {
+      getUserProfile(updatedStudent.email)
+        .then((profile) => {
+          if (!profile || !updatedStudent) return;
+          return saveUserProfile({
+            ...profile,
+            age: updatedStudent.age,
+            weight: updatedStudent.weight,
+            height: updatedStudent.height,
+            healthConditions: updatedStudent.healthConditions
+          });
+        })
+        .catch(console.error);
+    }
     setIsEditingClinical(false);
     alert("Prontuário clínico e indicadores de composição corporal atualizados com sucesso!");
   };
@@ -253,7 +309,7 @@ export default function TrainerPanel({ darkMode }: TrainerPanelProps) {
   const [newObjective, setNewObjective] = useState('Hipertrofia');
   const [newConsistency, setNewConsistency] = useState(80);
   const [newPricingType, setNewPricingType] = useState<'mensal' | 'hora'>('mensal');
-  const [newPricingValue, setNewPricingValue] = useState<number>(pricePerStudent);
+  const [newPricingValue, setNewPricingValue] = useState<string>(pricePerStudent.toString());
 
   // LINK STUDENT BY ID MODULE STATES
   const [addType, setAddType] = useState<'local' | 'vincular'>('local');
@@ -287,14 +343,60 @@ export default function TrainerPanel({ darkMode }: TrainerPanelProps) {
   const [generatedInviteUrl, setGeneratedInviteUrl] = useState<string | null>(null);
   const [copiedInviteLink, setCopiedInviteLink] = useState(false);
   const [showInviteSection, setShowInviteSection] = useState(false);
-  const [trainerEmail, setTrainerEmail] = useState(() => {
-    try {
-      const stored = localStorage.getItem('treino_user_profile');
-      return stored ? JSON.parse(stored).email || '' : '';
-    } catch(e) {
-      return '';
-    }
-  });
+  const trainerEmail = user.email?.trim().toLowerCase() || '';
+
+  useEffect(() => {
+    if (!trainerEmail.trim()) return;
+    let isMounted = true;
+
+    loadCoachStudents(trainerEmail)
+      .then(async (cloudStudents) => {
+        if (!isMounted || !cloudStudents?.length) return;
+        const normalized = await Promise.all(cloudStudents.map(async (cloudStudent) => {
+          const normalizedStudent = normalizeCloudStudent(cloudStudent);
+
+          if (!normalizedStudent.email) {
+            return normalizedStudent;
+          }
+
+          try {
+            const profile = await getUserProfile(normalizedStudent.email);
+            if (!profile) {
+              return normalizedStudent;
+            }
+
+            return {
+              ...normalizedStudent,
+              age: profile.age ?? normalizedStudent.age,
+              weight: profile.weight ?? normalizedStudent.weight,
+              height: profile.height ?? normalizedStudent.height,
+              healthConditions: profile.healthConditions ?? normalizedStudent.healthConditions,
+              experienceLevel: profile.experienceLevel ?? normalizedStudent.experienceLevel,
+              objective: profile.objective ?? normalizedStudent.objective,
+              accessCount: profile.accessCount ?? normalizedStudent.accessCount
+            };
+          } catch (error) {
+            console.error('Erro ao carregar perfil do aluno vinculado', error);
+            return normalizedStudent;
+          }
+        }));
+
+        setStudents((prev) => {
+          const merged = new Map<string, Student>();
+          prev.forEach((student) => merged.set(getStudentMergeKey(student), student));
+          normalized.forEach((student) => {
+            const key = getStudentMergeKey(student);
+            merged.set(key, { ...(merged.get(key) || {} as Student), ...student });
+          });
+          return Array.from(merged.values());
+        });
+      })
+      .catch(console.error);
+
+    return () => {
+      isMounted = false;
+    };
+  }, [trainerEmail]);
 
   // Save changes locally
   useEffect(() => {
@@ -375,6 +477,21 @@ export default function TrainerPanel({ darkMode }: TrainerPanelProps) {
         createdAt: new Date().toISOString(),
         exercises: data.exercises
       };
+
+      setManualTitle(prescribedRoutine.title);
+      setManualExercises(prescribedRoutine.exercises.map((ex: any) => ({
+        name: ex.name || '',
+        sets: ex.sets || 3,
+        reps: ex.reps || '10-12',
+        rest: ex.rest || '60s',
+        observation: ex.observation || '',
+        day: ex.day || 'Dia A',
+        weight: ex.weight || '',
+        videoUrl: ex.videoUrl || ''
+      })));
+      setPrescribeTab('manual');
+      alert(`Treino automático gerado para ${selectedStudent.name}. Revise e edite os exercícios antes de prescrever.`);
+      return;
 
       const studentIdKey = selectedStudent.studentId || selectedStudent.id;
       localStorage.setItem(`treino_prescribed_routine_${studentIdKey}`, JSON.stringify(prescribedRoutine));
@@ -516,6 +633,21 @@ export default function TrainerPanel({ darkMode }: TrainerPanelProps) {
         exercises: fallbackExercises
       };
 
+      setManualTitle(prescribedRoutine.title);
+      setManualExercises(prescribedRoutine.exercises.map((ex: any) => ({
+        name: ex.name || '',
+        sets: ex.sets || 3,
+        reps: ex.reps || '10-12',
+        rest: ex.rest || '60s',
+        observation: ex.observation || '',
+        day: ex.day || 'Dia A',
+        weight: ex.weight || '',
+        videoUrl: ex.videoUrl || ''
+      })));
+      setPrescribeTab('manual');
+      alert(`Treino automático local gerado para ${selectedStudent.name}. Revise e edite os exercícios antes de prescrever.`);
+      return;
+
       const studentIdKey = selectedStudent.studentId || selectedStudent.id;
       localStorage.setItem(`treino_prescribed_routine_${studentIdKey}`, JSON.stringify(prescribedRoutine));
       
@@ -556,7 +688,7 @@ export default function TrainerPanel({ darkMode }: TrainerPanelProps) {
     }
   };
 
-  const handlePrescribeManual = () => {
+  const handlePrescribeManual = async () => {
     if (!selectedStudent) return;
     const validExercises = manualExercises
       .filter(ex => ex.name.trim() !== '')
@@ -583,10 +715,12 @@ export default function TrainerPanel({ darkMode }: TrainerPanelProps) {
     const studentIdKey = selectedStudent.studentId || selectedStudent.id;
     localStorage.setItem(`treino_prescribed_routine_${studentIdKey}`, JSON.stringify(prescribedRoutine));
 
+    let syncedStudent: Student | null = null;
     const updated = students.map(st => {
       if (st.id === selectedStudent.id) {
-        return {
+        syncedStudent = {
           ...st,
+          prescribedRoutine,
           workoutLogs: [
             {
               id: `log-manual-prescription-${Date.now()}`,
@@ -609,12 +743,39 @@ export default function TrainerPanel({ darkMode }: TrainerPanelProps) {
             ...st.workoutLogs
           ]
         };
+        return syncedStudent;
       }
       return st;
     });
 
     setStudents(updated);
     setSelectedStudent(updated.find(x => x.id === selectedStudent.id) || null);
+    if (trainerEmail.trim() && syncedStudent) {
+      await publishPrescribedRoutineToCoachStudent(trainerEmail, syncedStudent, prescribedRoutine);
+    }
+    if (selectedStudent.email) {
+      const studentRoutine = {
+        ...prescribedRoutine,
+        id: `prescribed-${studentIdKey}`
+      };
+      await Promise.allSettled([
+        saveWorkoutRoutine(selectedStudent.email, studentRoutine),
+        createAppNotification(selectedStudent.email, {
+          type: 'workout_published',
+          title: 'Novo treino disponível',
+          message: `O seu Personal publicou o treino "${prescribedRoutine.title}". Abra a aba Treino para consultar os exercícios.`,
+          routineId: studentRoutine.id,
+          coachEmail: trainerEmail
+        }),
+        queueWorkoutPublishedEmail({
+          toEmail: selectedStudent.email,
+          studentName: selectedStudent.name,
+          coachEmail: trainerEmail,
+          routineTitle: prescribedRoutine.title,
+          routineId: studentRoutine.id
+        })
+      ]);
+    }
     alert(`Sucesso! Treino Manual de ${validExercises.length} exercícios emitido e gravado para o aluno ${selectedStudent.name}.`);
     
     // Reset state
@@ -684,6 +845,9 @@ export default function TrainerPanel({ darkMode }: TrainerPanelProps) {
       };
       setStudents([linkedSt, ...students]);
       setSelectedStudent(linkedSt);
+      if (trainerEmail.trim()) {
+        upsertCoachStudent(trainerEmail, linkedSt).catch(console.error);
+      }
       alert(`Aluno de conta ativa "${storedUser.name}" vinculado sincronizadamente com sucesso!`);
     } else {
       // Offline fallback simulations
@@ -728,6 +892,9 @@ export default function TrainerPanel({ darkMode }: TrainerPanelProps) {
       };
       setStudents([fakeStudent, ...students]);
       setSelectedStudent(fakeStudent);
+      if (trainerEmail.trim()) {
+        upsertCoachStudent(trainerEmail, fakeStudent).catch(console.error);
+      }
       alert(`Aluno "${chosenName}" (${targetId}) foi adicionado com sucesso de forma remota.`);
     }
 
@@ -785,7 +952,7 @@ export default function TrainerPanel({ darkMode }: TrainerPanelProps) {
       directiveDate: new Date().toISOString(),
       isActive: true,
       pricingType: newPricingType,
-      pricingValue: newPricingValue,
+      pricingValue: parseFloat(newPricingValue) || 0,
       workoutLogs: [
         { 
           id: `log-${Date.now()}-1`, 
@@ -802,6 +969,9 @@ export default function TrainerPanel({ darkMode }: TrainerPanelProps) {
 
     setStudents([newSt, ...students]);
     setSelectedStudent(newSt);
+    if (trainerEmail.trim()) {
+      upsertCoachStudent(trainerEmail, newSt).catch(console.error);
+    }
     
     // reset form
     setNewName('');
@@ -810,14 +980,18 @@ export default function TrainerPanel({ darkMode }: TrainerPanelProps) {
     setNewObjective('Hipertrofia');
     setNewConsistency(80);
     setNewPricingType('mensal');
-    setNewPricingValue(pricePerStudent);
+    setNewPricingValue(pricePerStudent.toString());
     setShowAddModal(false);
   };
 
   // Delete student logic
   const handleDeleteStudent = (id: string, name: string) => {
     if (confirm(`Pretende mesmo remover o aluno ${name} da sua listagem?`)) {
+      const target = students.find(st => st.id === id);
       setStudents(students.filter(st => st.id !== id));
+      if (trainerEmail.trim() && target) {
+        deleteCoachStudent(trainerEmail, target.studentId || target.id).catch(console.error);
+      }
       if (selectedStudent?.id === id) {
         setSelectedStudent(null);
       }
@@ -1679,7 +1853,7 @@ export default function TrainerPanel({ darkMode }: TrainerPanelProps) {
                           Gerando e sincronizando...
                         </span>
                       ) : (
-                        'Gerar & Prescrever Treino Inteligente IA'
+                        'Gerar Treino Automatico'
                       )}
                     </button>
                   </div>
@@ -1844,7 +2018,7 @@ export default function TrainerPanel({ darkMode }: TrainerPanelProps) {
                         onClick={handlePrescribeManual}
                         className="flex-1 py-2 bg-brand-neon text-black font-black uppercase text-[10.5px] rounded-xl tracking-wider text-center hover:bg-white transition-all shadow-md shadow-brand-neon/10 active:scale-95 cursor-pointer"
                       >
-                        Prescrever Treino Manual
+                        Prescrever Treino
                       </button>
                     </div>
                   </div>
@@ -2144,9 +2318,13 @@ export default function TrainerPanel({ darkMode }: TrainerPanelProps) {
                   <button
                     type="button"
                     onClick={() => {
+                      if (!trainerEmail) {
+                        alert('Sessão do Personal sem email. Faça login novamente antes de gerar o link do aluno.');
+                        return;
+                      }
                       const randId = `STU-${Math.floor(1000 + Math.random() * 9000)}`;
                       // Generate complete unique invitation link URL
-                      const url = `${window.location.origin}${window.location.pathname}?ref_coach=${encodeURIComponent(trainerEmail || 'personal_trainer')}&student_name=${encodeURIComponent(inviteName.trim())}&student_email=${encodeURIComponent(inviteEmail.trim())}&student_id=${encodeURIComponent(randId)}&student_level=${encodeURIComponent(inviteLevel)}`;
+                      const url = `${window.location.origin}${window.location.pathname}?ref_coach=${encodeURIComponent(trainerEmail)}&student_name=${encodeURIComponent(inviteName.trim())}&student_email=${encodeURIComponent(inviteEmail.trim())}&student_id=${encodeURIComponent(randId)}&student_level=${encodeURIComponent(inviteLevel)}`;
                       setGeneratedInviteUrl(url);
                     }}
                     className={`px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider cursor-pointer transition-all flex items-center justify-center gap-1.5 active:scale-95 border ${
@@ -2819,7 +2997,7 @@ export default function TrainerPanel({ darkMode }: TrainerPanelProps) {
                         type="number"
                         min="0"
                         value={newPricingValue}
-                        onChange={(e) => setNewPricingValue(parseFloat(e.target.value) || 0)}
+                        onChange={(e) => setNewPricingValue(e.target.value)}
                         className={`w-full p-2.5 text-xs rounded-lg border focus:outline-none focus:ring-1 transition-all ${
                           darkMode 
                             ? 'bg-[#181818] border-brand-border text-stone-100 focus:ring-brand-neon/30' 

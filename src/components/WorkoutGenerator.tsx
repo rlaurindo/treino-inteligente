@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Sparkles, Dumbbell, Play, CheckCircle2, RefreshCw, ChevronRight, 
@@ -8,6 +8,8 @@ import {
 } from 'lucide-react';
 import { jsPDF } from 'jspdf';
 import { WorkoutRoutine, TrainingLog, UserProfile } from '../types';
+import { useLanguage } from '../context/LanguageContext';
+import { loadPrescribedRoutineForStudent, loadWorkoutRoutines } from '../services/db';
 
 // Helper functions to detect and format YouTube URLs for high-quality inline iframe presentation
 const isYouTubeUrl = (url?: string): boolean => {
@@ -234,8 +236,11 @@ export default function WorkoutGenerator({
   isOfflineMode,
   darkMode
 }: WorkoutGeneratorProps) {
+  const { t } = useLanguage();
   const [isLoading, setIsLoading] = useState(false);
   const [currentRoutine, setCurrentRoutine] = useState<WorkoutRoutine | null>(null);
+  const [prescriptionNotice, setPrescriptionNotice] = useState('');
+  const lastNotifiedRoutineId = useRef<string | null>(null);
 
   // Secure Height, Weight and configuration states tied exclusively to active authenticated user to prevent data leaks
   const [height, setHeight] = useState<string>(() => {
@@ -587,9 +592,9 @@ export default function WorkoutGenerator({
           };
         }
       }
-      return { type: 'mensal', value: 45.00, isActive: true };
+      return { type: 'mensal', value: 0, isActive: false };
     } catch {
-      return { type: 'mensal', value: 45.00, isActive: true };
+      return { type: 'mensal', value: 0, isActive: false };
     }
   })();
 
@@ -633,6 +638,15 @@ export default function WorkoutGenerator({
   const [exerciseSearchQuery, setExerciseSearchQuery] = useState('');
   const [selectedMuscleCategory, setSelectedMuscleCategory] = useState<string>('Todos');
   const [routineSearchQuery, setRoutineSearchQuery] = useState('');
+  const [showRoutineBuilder, setShowRoutineBuilder] = useState(false);
+
+  const appSubscriptionLabel = user.subscribedPrice || '€5,99 / mês';
+  const appSubscriptionAmount = (() => {
+    const raw = appSubscriptionLabel.replace(',', '.');
+    const match = raw.match(/(\d+(?:\.\d+)?)/);
+    return match ? Number(match[1]) : 5.99;
+  })();
+  const hasCoachLink = !!user.coachLinked || !!user.coachEmail || (user.subscribedPlan || '').toLowerCase().includes('orientado');
 
   useEffect(() => {
     if (videoRef.current) {
@@ -937,7 +951,7 @@ export default function WorkoutGenerator({
         },
         body: JSON.stringify({
           transactionId: activeTransactionId,
-          amount: 20.00,
+          amount: appSubscriptionAmount,
           event: status === 'paid' ? 'payment.success' : 'payment.failed',
           failureReason: status === 'failed' ? 'Cancelado intencionalmente na Sandbox Pessoal.' : undefined,
           timestamp: new Date().toISOString()
@@ -969,7 +983,7 @@ export default function WorkoutGenerator({
         },
         body: JSON.stringify({
           phoneNumber: 'QR_CODE_SCAN',
-          amount: 20.00
+          amount: appSubscriptionAmount
         })
       });
 
@@ -1074,7 +1088,7 @@ export default function WorkoutGenerator({
         },
         body: JSON.stringify({
           phoneNumber: cleanedPhone,
-          amount: 20.00
+          amount: appSubscriptionAmount
         })
       });
 
@@ -1144,18 +1158,25 @@ export default function WorkoutGenerator({
 
   // Automatically persist the active/last generated routine in localStorage whenever it changes
   useEffect(() => {
+    if (hasCoachLink) {
+      return;
+    }
+
     if (currentRoutine) {
       const userKey = user?.studentId 
         ? user.studentId.trim().toUpperCase() 
         : (user?.email ? user.email.trim().toUpperCase() : 'GUEST');
       localStorage.setItem(`treino_active_routine_${userKey}`, JSON.stringify(currentRoutine));
     }
-  }, [currentRoutine, user?.studentId, user?.email]);
+  }, [currentRoutine, user?.studentId, user?.email, hasCoachLink]);
 
   // Load last generated or offline fallback
   useEffect(() => {
+    let isMounted = true;
+
     // Priority 1: Check if there is a PT prescribed routine for this student
     const studentIdKey = user?.studentId;
+    const routineLookupKey = studentIdKey || user?.email;
     if (studentIdKey) {
       let prescribedStr = localStorage.getItem(`treino_prescribed_routine_${studentIdKey.trim().toUpperCase()}`);
       if (!prescribedStr) {
@@ -1165,11 +1186,75 @@ export default function WorkoutGenerator({
         try {
           const prescribed = JSON.parse(prescribedStr);
           setCurrentRoutine(prescribed);
-          return;
+          if (!hasCoachLink) {
+            return;
+          }
         } catch (e) {
           console.error("Erro ao carregar treino prescrito:", e);
         }
       }
+    }
+
+    if (hasCoachLink) {
+      let retryTimer: number | undefined;
+      let pollTimer: number | undefined;
+      if (routineLookupKey) {
+        const fetchPrescribedRoutine = () => {
+          loadPrescribedRoutineForStudent(user.coachEmail, routineLookupKey, user.email)
+            .then(async (cloudRoutine) => {
+              let routine = cloudRoutine;
+              if (!routine && user.email) {
+                const routines = await loadWorkoutRoutines(user.email);
+                routine = routines.find(item => item.id.startsWith('prescribed-')) || routines[0] || null;
+              }
+              if (!isMounted || !routine) return;
+              setCurrentRoutine(routine);
+              const isNewRoutine = lastNotifiedRoutineId.current !== routine.id;
+              if (isNewRoutine) {
+                lastNotifiedRoutineId.current = routine.id;
+                setPrescriptionNotice(`Novo treino recebido: ${routine.title}`);
+              }
+              if (isNewRoutine && 'Notification' in window && Notification.permission === 'granted') {
+                new Notification('Treino Inteligente', {
+                  body: `O seu Personal publicou "${routine.title}".`
+                });
+              }
+              localStorage.setItem(`treino_prescribed_routine_${routineLookupKey.trim().toUpperCase()}`, JSON.stringify(routine));
+            })
+            .catch(console.error);
+        };
+        fetchPrescribedRoutine();
+        retryTimer = window.setTimeout(fetchPrescribedRoutine, 1800);
+        pollTimer = window.setInterval(fetchPrescribedRoutine, 10000);
+      }
+      return () => {
+        isMounted = false;
+        if (retryTimer) {
+          window.clearTimeout(retryTimer);
+        }
+        if (pollTimer) {
+          window.clearInterval(pollTimer);
+        }
+      };
+    }
+
+    if (routineLookupKey) {
+      loadPrescribedRoutineForStudent(user.coachEmail, routineLookupKey, user.email)
+        .then((cloudRoutine) => {
+          if (!isMounted || !cloudRoutine) return;
+          setCurrentRoutine(cloudRoutine);
+          if (lastNotifiedRoutineId.current !== cloudRoutine.id) {
+            lastNotifiedRoutineId.current = cloudRoutine.id;
+            setPrescriptionNotice(`Novo treino recebido: ${cloudRoutine.title}`);
+          }
+          localStorage.setItem(`treino_prescribed_routine_${routineLookupKey.trim().toUpperCase()}`, JSON.stringify(cloudRoutine));
+        })
+        .catch(console.error);
+    }
+
+    if (hasCoachLink) {
+      setCurrentRoutine(null);
+      return;
     }
 
     // Priority 2: Stored active/self-generated routine for this student
@@ -1191,7 +1276,10 @@ export default function WorkoutGenerator({
     if (savedOfflineWorkouts.length > 0) {
       setCurrentRoutine(savedOfflineWorkouts[0]);
     }
-  }, [user?.studentId, user?.email, savedOfflineWorkouts]);
+    return () => {
+      isMounted = false;
+    };
+  }, [user?.studentId, user?.email, user?.coachEmail, savedOfflineWorkouts, hasCoachLink]);
 
   // Sync active calorie tick with timer
   useEffect(() => {
@@ -1201,6 +1289,11 @@ export default function WorkoutGenerator({
   }, [secondsElapsed, isWorkoutActive]);
 
   const handleGenerateWorkout = async () => {
+    if (hasCoachLink) {
+      alert('A sua conta esta vinculada a um Personal Trainer. O treino sera disponibilizado quando o Personal gerar ou prescrever a rotina.');
+      return;
+    }
+
     if (
       !height || !weight || isNaN(Number(height)) || isNaN(Number(weight)) || Number(height) <= 30 || Number(weight) <= 15 ||
       !daysPerWeek || !availableTime || isNaN(Number(daysPerWeek)) || isNaN(Number(availableTime)) || Number(daysPerWeek) < 1 || Number(daysPerWeek) > 7 || Number(availableTime) < 10
@@ -1226,6 +1319,7 @@ export default function WorkoutGenerator({
           exercises: exercisesList
         };
         setCurrentRoutine(generated);
+        setShowRoutineBuilder(false);
         setIsLoading(false);
       }, 1000);
       return;
@@ -1261,6 +1355,7 @@ export default function WorkoutGenerator({
       };
       
       setCurrentRoutine(generated);
+      setShowRoutineBuilder(false);
     } catch (err) {
       console.error(err);
       // Fail over to internal local template split
@@ -1276,6 +1371,7 @@ export default function WorkoutGenerator({
         exercises: exercisesList
       };
       setCurrentRoutine(generated);
+      setShowRoutineBuilder(false);
     } finally {
       setIsLoading(false);
     }
@@ -1322,15 +1418,16 @@ export default function WorkoutGenerator({
           </div>
           <div>
             <h4 className={`text-xs font-black uppercase tracking-widest ${darkMode ? 'text-white' : 'text-stone-900'}`}>
-              Pesquisa na Rotina
+              {t('workout.searchTitle')}
             </h4>
             <p className="text-[10px] text-stone-400 mt-0.5 leading-normal">
-              Filtre em tempo real os exercícios da sua rotina ativa por nome ou zona muscular.
+              {t('workout.searchDesc')}
             </p>
           </div>
         </div>
 
-        <div className="relative w-full md:w-7/12">
+        <div className="w-full md:w-7/12 flex flex-col sm:flex-row gap-2">
+          <div className="relative flex-1">
           <Search className={`absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 ${
             darkMode ? 'text-stone-500' : 'text-stone-400'
           }`} />
@@ -1338,8 +1435,8 @@ export default function WorkoutGenerator({
             type="text"
             placeholder={
               currentRoutine 
-                ? "Nome do exercício ou grupo muscular (Ex: Agachamento, Glúteos, Peito)..."
-                : "Sem rotina ativa. Gere ou selecione uma rotina para liberar a busca..."
+                ? t('workout.searchRoutine')
+                : t('workout.noActiveRoutinePlaceholder')
             }
             disabled={!currentRoutine}
             value={routineSearchQuery}
@@ -1363,8 +1460,45 @@ export default function WorkoutGenerator({
               <X className="w-3.5 h-3.5" />
             </button>
           )}
+          </div>
+          {!hasCoachLink && (
+            <button
+              type="button"
+              onClick={() => setShowRoutineBuilder(true)}
+              className={`px-3.5 py-2.5 rounded-xl border text-[10px] font-black uppercase tracking-wider flex items-center justify-center gap-1.5 transition-all cursor-pointer whitespace-nowrap ${
+                darkMode
+                  ? 'bg-brand-neon text-black border-transparent hover:bg-white'
+                  : 'bg-emerald-500 text-white border-transparent hover:bg-emerald-600'
+              }`}
+            >
+              <Sparkles className="w-3.5 h-3.5" />
+              {t('workout.createNewRoutine')}
+            </button>
+          )}
         </div>
       </div>
+
+      {prescriptionNotice && (
+        <div className={`p-4 rounded-2xl border flex items-start justify-between gap-3 ${
+          darkMode ? 'bg-brand-neon/10 border-brand-neon/25 text-stone-100' : 'bg-emerald-50 border-emerald-200 text-emerald-950'
+        }`}>
+          <div className="flex items-start gap-3">
+            <CheckCircle2 className={`w-5 h-5 mt-0.5 ${darkMode ? 'text-brand-neon' : 'text-emerald-600'}`} />
+            <div>
+              <h3 className="text-xs font-black uppercase tracking-widest">Treino publicado pelo Personal</h3>
+              <p className={`text-xs mt-1 ${darkMode ? 'text-stone-300' : 'text-emerald-800'}`}>{prescriptionNotice}</p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setPrescriptionNotice('')}
+            className={`p-1.5 rounded-lg transition-colors ${darkMode ? 'hover:bg-white/10 text-stone-300' : 'hover:bg-emerald-100 text-emerald-700'}`}
+            aria-label="Fechar notificacao"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
 
       <AnimatePresence mode="wait">
         {!isWorkoutActive ? (
@@ -1387,13 +1521,13 @@ export default function WorkoutGenerator({
                 </div>
                 <div>
                   <div className="flex items-center gap-2">
-                    <span className="text-[9px] font-black uppercase tracking-widest text-emerald-400">Subscrição App</span>
+                    <span className="text-[9px] font-black uppercase tracking-widest text-emerald-400">{t('workout.appSubscription')}</span>
                     <span className="px-1.5 py-0.5 rounded text-[8px] font-black uppercase tracking-wider bg-emerald-500/15 text-emerald-600 dark:bg-brand-neon/15 dark:text-brand-neon">
                       Ativo
                     </span>
                   </div>
                   <h4 className={`text-sm font-black mt-1 uppercase tracking-tight ${darkMode ? 'text-white' : 'text-stone-900'}`}>
-                    6,99 € <span className="text-[10px] text-stone-400 font-semibold lowercase">/ assinatura mensal</span>
+                    {appSubscriptionLabel} <span className="text-[10px] text-stone-400 font-semibold lowercase">/ assinatura</span>
                   </h4>
                   <p className="text-[10.5px] text-stone-400 mt-1 leading-normal">
                     Assinatura que liberta a geração ilimitada de treinos por Inteligência Artificial do Workout Generator e relatórios.
@@ -1402,13 +1536,14 @@ export default function WorkoutGenerator({
               </div>
 
               {/* Part 2: Personal Coach Charging Rate */}
+              {hasCoachLink && coachPricing.isActive && (
               <div className="flex-1 flex items-start gap-3.5 p-3.5 rounded-xl bg-amber-500/5 border border-amber-500/10">
                 <div className="p-2.5 rounded-lg bg-amber-500/10 text-amber-500 shrink-0">
                   <Award className="w-5 h-5 text-amber-400" />
                 </div>
                 <div className="w-full">
                   <div className="flex items-center justify-between gap-2">
-                    <span className="text-[9px] font-black uppercase tracking-widest text-amber-400">Acompanhamento do Coach</span>
+                    <span className="text-[9px] font-black uppercase tracking-widest text-amber-400">{t('workout.coachTracking')}</span>
                     <span className={`px-1.5 py-0.5 rounded text-[8px] font-black uppercase tracking-wider ${
                       coachPricing.isActive 
                         ? 'bg-emerald-500/10 text-emerald-400' 
@@ -1432,9 +1567,11 @@ export default function WorkoutGenerator({
                   </p>
                 </div>
               </div>
+              )}
             </div>
 
             {/* Campo de Pesquisa e Biblioteca de Exercícios no #generator-container */}
+            {currentRoutine && (
             <div className={`p-6 rounded-2xl border text-left ${
               darkMode ? 'bg-brand-card border-brand-border' : 'bg-white border-stone-200 shadow-sm'
             }`}>
@@ -1580,15 +1717,37 @@ export default function WorkoutGenerator({
                 );
               })()}
             </div>
+            )}
+
+            {hasCoachLink && !currentRoutine && (
+              <div className={`p-6 rounded-2xl border text-left ${
+                darkMode ? 'bg-brand-card border-brand-border' : 'bg-white border-stone-200'
+              }`}>
+                <div className="flex items-start gap-3">
+                  <div className="p-2.5 rounded-xl bg-amber-500/10 text-amber-500 shrink-0">
+                    <Award className="w-5 h-5 text-amber-400" />
+                  </div>
+                  <div>
+                    <h3 className="font-black text-sm uppercase tracking-tight">
+                      {t('workout.waitingCoachTitle')}
+                    </h3>
+                    <p className={`text-xs mt-1 leading-relaxed ${darkMode ? 'text-stone-400' : 'text-stone-500'}`}>
+                      {t('workout.waitingCoachDesc').replace('{coach}', user.coachName || user.coachEmail || 'responsável')}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Quick stats and action cards */}
+            {(!hasCoachLink && (!currentRoutine || showRoutineBuilder)) && (
             <div className={`p-6 rounded-2xl border ${
               darkMode ? 'bg-brand-card border-brand-border' : 'bg-white border-stone-200'
             }`}>
               <div className="flex items-center justify-between mb-4">
                 <div className="flex items-center gap-2">
                   <Flame className={`w-5 h-5 animate-pulse ${darkMode ? 'text-brand-neon' : 'text-amber-500'}`} />
-                  <h3 className="font-bold text-base uppercase tracking-tight">Criar Nova Rotina</h3>
+                  <h3 className="font-bold text-base uppercase tracking-tight">{t('workout.createRoutineTitle')}</h3>
                 </div>
                 {isOfflineMode && (
                   <span className={`px-2.5 py-1 text-[10px] font-black uppercase rounded-full flex items-center gap-1 ${
@@ -1668,6 +1827,10 @@ export default function WorkoutGenerator({
                         localStorage.setItem('user_height', e.target.value);
                         const key = user?.studentId ? user.studentId.trim().toUpperCase() : (user?.email ? user.email.trim().toUpperCase() : 'GUEST');
                         localStorage.setItem(`user_height_${key}`, e.target.value);
+                        const nextHeight = parseFloat(e.target.value);
+                        if (onChangeProfile && !Number.isNaN(nextHeight)) {
+                          onChangeProfile({ height: nextHeight });
+                        }
                       }}
                       className={`w-full px-3.5 py-3 rounded-lg border text-xs font-bold focus:outline-none transition-all ${
                         darkMode 
@@ -1690,6 +1853,10 @@ export default function WorkoutGenerator({
                         localStorage.setItem('user_weight', e.target.value);
                         const key = user?.studentId ? user.studentId.trim().toUpperCase() : (user?.email ? user.email.trim().toUpperCase() : 'GUEST');
                         localStorage.setItem(`user_weight_${key}`, e.target.value);
+                        const nextWeight = parseFloat(e.target.value);
+                        if (onChangeProfile && !Number.isNaN(nextWeight)) {
+                          onChangeProfile({ weight: nextWeight });
+                        }
                       }}
                       className={`w-full px-3.5 py-3 rounded-lg border text-xs font-bold focus:outline-none transition-all ${
                         darkMode 
@@ -1784,6 +1951,7 @@ export default function WorkoutGenerator({
                 </div>
               </div>
             </div>
+            )}
 
             {/* Current Workout Details */}
             {currentRoutine && (
@@ -2061,7 +2229,7 @@ export default function WorkoutGenerator({
                         </div>
                         <h3 className="text-xl font-black uppercase tracking-tight">Pagamento Concluído!</h3>
                         <p className="text-stone-300 text-xs max-w-sm">
-                          O seu pagamento de 6,99€ foi processado com sucesso. A sua subscrição mensal premium do app foi ativada!
+                          O seu pagamento de {appSubscriptionLabel} foi processado com sucesso. A sua subscrição premium do app foi ativada!
                         </p>
                       </div>
                     ) : (
@@ -2084,9 +2252,7 @@ export default function WorkoutGenerator({
                             O seu plano de treino foi gerado de forma única tendo em conta a sua fisionomia (Altura: <strong className="text-stone-200">{height} cm</strong>, Peso: <strong className="text-stone-200">{weight} kg</strong>) e disponibilidade (<strong className="text-stone-200">{daysPerWeek} dias/semana</strong> com <strong className="text-stone-200">{availableTime} min/sessão</strong>).
                           </p>
                           <div className="flex items-baseline gap-1.5 pt-1">
-                            <span className="text-stone-500 text-xs line-through font-extrabold">12,99€</span>
-                            <span className={`text-3xl font-black ${darkMode ? 'text-brand-neon' : 'text-emerald-500'}`}>6,99€</span>
-                            <span className="text-xs text-stone-450 font-semibold text-stone-400">/ assinatura mensal</span>
+                            <span className={`text-3xl font-black ${darkMode ? 'text-brand-neon' : 'text-emerald-500'}`}>{appSubscriptionLabel}</span>
                           </div>
                         </div>
 
@@ -2149,7 +2315,7 @@ export default function WorkoutGenerator({
                                 }`}
                               />
                               <span className="text-[9px] text-stone-400 leading-normal block pt-1 font-medium">
-                                Será enviada uma notificação instantânea para a sua aplicação móvel MB WAY para confirmar o pagamento de 6,99€.
+                                Será enviada uma notificação instantânea para a sua aplicação móvel MB WAY para confirmar o pagamento de {appSubscriptionLabel}.
                               </span>
                             </div>
 
@@ -2189,7 +2355,7 @@ export default function WorkoutGenerator({
                               ) : (
                                 <>
                                   <Lock className="w-3.5 h-3.5" />
-                                  Pagar € 6,99 com MB WAY & Desbloquear Premium
+                                  Pagar {appSubscriptionLabel} com MB WAY & Desbloquear Premium
                                 </>
                               )}
                             </button>
@@ -2244,7 +2410,7 @@ export default function WorkoutGenerator({
 
                                 <div className="mt-4 space-y-1">
                                   <p className={`text-sm font-black uppercase tracking-wide ${darkMode ? 'text-brand-neon' : 'text-emerald-500'}`}>
-                                    € 6,99 EUR
+                                    {appSubscriptionLabel}
                                   </p>
                                   <p className="text-[10px] text-stone-300 font-bold">
                                     Acesse o seu **Telemóvel Virtual** à direita do ecrã para simular a leitura do código no app MB WAY de teste!
@@ -2262,7 +2428,7 @@ export default function WorkoutGenerator({
                                 <div>
                                   <h4 className="text-xs font-black uppercase tracking-wide text-stone-100">Código QR MB WAY</h4>
                                   <p className="text-[10px] text-stone-400 max-w-xs mt-1">
-                                    Geramos um Código QR dinâmico único com o valor exato da sua subscrição mensal (€6,99) para escanear de forma simplificada e segura.
+                                    Geramos um Código QR dinâmico único com o valor exato da sua subscrição ({appSubscriptionLabel}) para escanear de forma simplificada e segura.
                                   </p>
                                 </div>
                                 <button
@@ -2348,7 +2514,7 @@ export default function WorkoutGenerator({
                                   <span className="text-[7px] text-stone-400 ml-auto">agora</span>
                                 </div>
                                 <h5 className="text-[9px] font-black text-stone-900 leading-tight">Autorização de Pagamento</h5>
-                                <p className="text-[8px] text-stone-600 leading-normal mt-0.5">O Workout Generator está a solicitar €6,99.</p>
+                                <p className="text-[8px] text-stone-600 leading-normal mt-0.5">O Workout Generator está a solicitar {appSubscriptionLabel}.</p>
                               </div>
 
                               {/* Logotipo da Marca MB WAY Central */}
@@ -2366,7 +2532,7 @@ export default function WorkoutGenerator({
                                 
                                 <div className="py-1 border-t border-b border-indigo-800/30">
                                   <span className="text-[8px] uppercase tracking-wider text-indigo-300 block font-bold">Valor Solicitado</span>
-                                  <span className="text-base font-black text-white">6,99 €</span>
+                                  <span className="text-base font-black text-white">{appSubscriptionLabel}</span>
                                 </div>
                                 
                                 <span className="text-[7.5px] text-indigo-300 block font-semibold leading-relaxed">
@@ -2402,7 +2568,7 @@ export default function WorkoutGenerator({
                               <div className="mt-2 space-y-1">
                                 <h4 className="text-[10px] font-black uppercase tracking-wider text-indigo-400">Inserir PIN MB WAY</h4>
                                 <p className="text-[8px] text-indigo-200 max-w-[170px] mx-auto leading-normal">
-                                  Insira o seu PIN de 6 dígitos para autorizar o pagamento de <strong className="text-white">6,99€</strong>.
+                                  Insira o seu PIN de 6 dígitos para autorizar o pagamento de <strong className="text-white">{appSubscriptionLabel}</strong>.
                                 </p>
                               </div>
 

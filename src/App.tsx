@@ -27,19 +27,93 @@ import {
   saveWearableStats, 
   loadWearableStats, 
   saveNotificationSettings, 
-  loadNotificationSettings 
+  loadNotificationSettings,
+  upsertCoachStudent
 } from './services/db';
 import { auth } from './firebase';
 import { signInAnonymously } from 'firebase/auth';
 
+const CLEAN_START_MARKER = 'treino_clean_start_2026_07_13';
+
+function resetLocalAppDataOnce() {
+  if (typeof window === 'undefined') return;
+  if (localStorage.getItem(CLEAN_START_MARKER) === 'done') return;
+
+  const prefixes = [
+    'treino_',
+    'user_height',
+    'user_weight',
+    'user_days_per_week',
+    'user_available_time',
+    'unlocked_routines',
+    'custom_exercise_videos'
+  ];
+
+  Object.keys(localStorage).forEach((key) => {
+    if (prefixes.some((prefix) => key.startsWith(prefix))) {
+      localStorage.removeItem(key);
+    }
+  });
+  Object.keys(sessionStorage).forEach((key) => {
+    if (key.startsWith('treino_')) {
+      sessionStorage.removeItem(key);
+    }
+  });
+  localStorage.setItem(CLEAN_START_MARKER, 'done');
+}
+
+function getCoachInviteFromUrl() {
+  const urlParams = new URLSearchParams(window.location.search);
+  return {
+    refCoach: urlParams.get('ref_coach'),
+    studentId: urlParams.get('student_id')
+  };
+}
+
+function applyCoachInvite(profile: UserProfile): UserProfile {
+  const { refCoach, studentId } = getCoachInviteFromUrl();
+
+  if (profile.role !== 'aluno' || !refCoach) {
+    return profile;
+  }
+
+  return {
+    ...profile,
+    role: 'aluno',
+    studentId: profile.studentId || studentId || undefined,
+    subscribedPlan: 'Atleta Orientado (Gratis)',
+    subscribedPrice: 'EUR 0,00',
+    coachEmail: refCoach,
+    coachName: profile.coachName || refCoach,
+    coachLinked: true
+  };
+}
+
+function isCoachLinkedStudent(user: UserProfile | null) {
+  return !!user && user.role === 'aluno' && (!!user.coachLinked || !!user.coachEmail || (user.subscribedPlan || '').toLowerCase().includes('orientado'));
+}
+
+function getDefaultTabForUser(user: UserProfile | null): 'workout' | 'stats' | 'feed' | 'wearable' | 'config' | 'trainer' {
+  if (user?.role === 'treinador') return 'trainer';
+  return 'workout';
+}
+
+function isTabAllowedForUser(tab: 'workout' | 'stats' | 'feed' | 'wearable' | 'config' | 'trainer', user: UserProfile | null) {
+  if (!user) return false;
+  if (user.role === 'treinador') return tab === 'trainer';
+  if (isCoachLinkedStudent(user)) return tab === 'workout';
+  return tab === 'workout' || tab === 'stats' || tab === 'feed' || tab === 'wearable' || tab === 'config';
+}
+
 export default function App() {
+  resetLocalAppDataOnce();
   const { language, t } = useLanguage();
   const [isSyncingDb, setIsSyncingDb] = useState(false);
   // Persistence state loaders
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(() => {
     try {
       const saved = localStorage.getItem('treino_user_profile');
-      return saved ? JSON.parse(saved) : null;
+      return saved ? applyCoachInvite(JSON.parse(saved)) : null;
     } catch {
       return null;
     }
@@ -236,9 +310,26 @@ export default function App() {
       try {
         const cloudProfile = await getUserProfile(currentUser!.email);
         if (cloudProfile) {
+          const roleChangedDuringLogin = !!currentUser!.role && !!cloudProfile.role && currentUser!.role !== cloudProfile.role;
+          const mergedCloudProfile = roleChangedDuringLogin
+            ? applyCoachInvite({
+                ...cloudProfile,
+                ...currentUser!,
+                role: currentUser!.role
+              })
+            : applyCoachInvite({
+                ...cloudProfile,
+                coachEmail: cloudProfile.coachEmail || currentUser!.coachEmail,
+                coachName: cloudProfile.coachName || currentUser!.coachName,
+                coachLinked: !!cloudProfile.coachLinked || !!currentUser!.coachLinked
+              });
+
           if (isSubscribed) {
             // Keep state and local synchronization updated with cloud master copy
-            setCurrentUser(cloudProfile);
+            setCurrentUser(mergedCloudProfile);
+          }
+          if (roleChangedDuringLogin || (mergedCloudProfile.coachLinked && !cloudProfile.coachLinked)) {
+            await saveUserProfile(mergedCloudProfile);
           }
           const routines = await loadWorkoutRoutines(currentUser!.email);
           if (routines && routines.length > 0 && isSubscribed) {
@@ -297,7 +388,7 @@ export default function App() {
   }, [currentUser?.email]);
 
   // Navigation and alerts
-  const [currentTab, setCurrentTab] = useState<'workout' | 'stats' | 'feed' | 'wearable' | 'config' | 'trainer'>('workout');
+  const [currentTab, setCurrentTab] = useState<'workout' | 'stats' | 'feed' | 'wearable' | 'config' | 'trainer'>(() => getDefaultTabForUser(currentUser));
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const [showNotificationAlert, setShowNotificationAlert] = useState(false);
   const [notificationMessage, setNotificationMessage] = useState('');
@@ -362,17 +453,24 @@ export default function App() {
     }
   }, [currentUser]);
 
-  // Redirect trainer/coach users to Trainer tab by default
   useEffect(() => {
-    if (currentUser?.role === 'treinador' && currentTab !== 'trainer' && currentTab !== 'feed' && currentTab !== 'config') {
-      setCurrentTab('trainer');
+    if (!currentUser) return;
+    const linkedProfile = applyCoachInvite(currentUser);
+    if (
+      linkedProfile.coachLinked !== currentUser.coachLinked ||
+      linkedProfile.coachEmail !== currentUser.coachEmail ||
+      linkedProfile.subscribedPlan !== currentUser.subscribedPlan ||
+      linkedProfile.studentId !== currentUser.studentId
+    ) {
+      setCurrentUser(linkedProfile);
+      saveUserProfile(linkedProfile).catch(console.error);
     }
-  }, [currentUser, currentTab]);
+  }, [currentUser?.email, currentUser?.role, currentUser?.coachLinked, currentUser?.coachEmail, currentUser?.subscribedPlan, currentUser?.studentId]);
 
-  // Redirect student/athlete users away from Trainer tab by default
+  // Enforce role-based navigation boundaries
   useEffect(() => {
-    if (currentUser?.role === 'aluno' && currentTab === 'trainer') {
-      setCurrentTab('workout');
+    if (currentUser && !isTabAllowedForUser(currentTab, currentUser)) {
+      setCurrentTab(getDefaultTabForUser(currentUser));
     }
   }, [currentUser, currentTab]);
 
@@ -394,6 +492,34 @@ export default function App() {
       const newUser = { ...currentUser, ...updated };
       setCurrentUser(newUser);
       saveUserProfile(newUser).catch(console.error);
+      if (newUser.role === 'aluno' && newUser.coachEmail) {
+        upsertCoachStudent(newUser.coachEmail, {
+          id: newUser.studentId || newUser.email,
+          studentId: newUser.studentId || newUser.email,
+          name: newUser.name,
+          email: newUser.email,
+          avatar: newUser.avatar,
+          experienceLevel: newUser.experienceLevel,
+          objective: newUser.objective,
+          streak: newUser.streak || 1,
+          consistencyScore: 88,
+          status: 'Normal',
+          lastWorkoutDate: new Date().toISOString(),
+          accessCount: newUser.accessCount,
+          isActive: true,
+          coachEmail: newUser.coachEmail,
+          coachName: newUser.coachName || newUser.coachEmail,
+          coachLinked: true,
+          pricingType: 'mensal',
+          pricingValue: 50,
+          age: newUser.age,
+          weight: newUser.weight,
+          height: newUser.height,
+          healthConditions: newUser.healthConditions,
+          lgpdConsent: newUser.lgpdConsent,
+          lgpdConsentDate: newUser.lgpdConsentDate
+        }).catch(console.error);
+      }
     }
   };
 
@@ -446,10 +572,10 @@ export default function App() {
     return (
       <AuthScreen 
         onLoginSuccess={(profile) => {
-          const updatedProfile = {
+          const updatedProfile = applyCoachInvite({
             ...profile,
             accessCount: (profile.accessCount || 0) + 1
-          };
+          });
 
           const urlParams = new URLSearchParams(window.location.search);
           const refCoach = urlParams.get('ref_coach');
@@ -481,6 +607,9 @@ export default function App() {
                 workoutLogs: [],
                 accessCount: updatedProfile.accessCount,
                 isActive: true,
+                coachEmail: refCoach,
+                coachName: refCoach,
+                coachLinked: true,
                 pricingType: 'mensal',
                 pricingValue: 50.00,
                 age: updatedProfile.age,
@@ -501,12 +630,14 @@ export default function App() {
                 list.unshift(studentPayload);
               }
               localStorage.setItem('treino_trainer_students', JSON.stringify(list));
+              upsertCoachStudent(refCoach, studentPayload).catch(console.error);
             } catch (err) {
               console.error('Error linking invited student to coach', err);
             }
           }
 
           setCurrentUser(updatedProfile);
+          setCurrentTab(getDefaultTabForUser(updatedProfile));
         }} 
         darkMode={darkMode} 
       />
@@ -671,7 +802,7 @@ export default function App() {
           </div>
 
           <nav className="space-y-1">
-            {currentUser?.role !== 'treinador' && (
+            {isTabAllowedForUser('workout', currentUser) && (
               <>
                 <button
                   onClick={() => setCurrentTab('workout')}
@@ -688,39 +819,43 @@ export default function App() {
                   <Dumbbell className="w-4 h-4" />
                   {t('nav.routine')}
                 </button>
-                <button
-                  onClick={() => setCurrentTab('stats')}
-                  className={`w-full p-4 rounded-xl flex items-center gap-3.5 font-bold text-xs transition-all text-left border ${
-                    currentTab === 'stats' 
-                      ? darkMode 
-                        ? 'bg-brand-neon text-black border-transparent shadow-lg shadow-brand-neon/10 uppercase tracking-tight'
-                        : 'bg-emerald-500 text-white shadow-xl shadow-emerald-500/10 border-transparent' 
-                      : darkMode
-                        ? 'text-stone-400 bg-transparent border-transparent hover:bg-brand-card hover:text-white hover:border-brand-border'
-                        : 'text-stone-500 bg-transparent border-transparent hover:bg-stone-100'
-                  }`}
-                >
-                  <TrendingUp className="w-4 h-4" />
-                  {t('nav.progress')}
-                </button>
               </>
             )}
-            <button
-              onClick={() => setCurrentTab('feed')}
-              className={`w-full p-4 rounded-xl flex items-center gap-3.5 font-bold text-xs transition-all text-left border ${
-                currentTab === 'feed' 
-                  ? darkMode 
-                    ? 'bg-brand-neon text-black border-transparent shadow-lg shadow-brand-neon/10 uppercase tracking-tight'
-                    : 'bg-emerald-500 text-white shadow-xl shadow-emerald-500/10 border-transparent' 
-                  : darkMode
-                    ? 'text-stone-400 bg-transparent border-transparent hover:bg-brand-card hover:text-white hover:border-brand-border'
-                    : 'text-stone-500 bg-transparent border-transparent hover:bg-stone-100'
-              }`}
-            >
-              <Users className="w-4 h-4" />
-              {t('nav.feed')}
-            </button>
-            {currentUser?.role !== 'treinador' && (
+            {isTabAllowedForUser('stats', currentUser) && (
+              <button
+                onClick={() => setCurrentTab('stats')}
+                className={`w-full p-4 rounded-xl flex items-center gap-3.5 font-bold text-xs transition-all text-left border ${
+                  currentTab === 'stats' 
+                    ? darkMode 
+                      ? 'bg-brand-neon text-black border-transparent shadow-lg shadow-brand-neon/10 uppercase tracking-tight'
+                      : 'bg-emerald-500 text-white shadow-xl shadow-emerald-500/10 border-transparent' 
+                    : darkMode
+                      ? 'text-stone-400 bg-transparent border-transparent hover:bg-brand-card hover:text-white hover:border-brand-border'
+                      : 'text-stone-500 bg-transparent border-transparent hover:bg-stone-100'
+                }`}
+              >
+                <TrendingUp className="w-4 h-4" />
+                {t('nav.progress')}
+              </button>
+            )}
+            {isTabAllowedForUser('feed', currentUser) && (
+              <button
+                onClick={() => setCurrentTab('feed')}
+                className={`w-full p-4 rounded-xl flex items-center gap-3.5 font-bold text-xs transition-all text-left border ${
+                  currentTab === 'feed' 
+                    ? darkMode 
+                      ? 'bg-brand-neon text-black border-transparent shadow-lg shadow-brand-neon/10 uppercase tracking-tight'
+                      : 'bg-emerald-500 text-white shadow-xl shadow-emerald-500/10 border-transparent' 
+                    : darkMode
+                      ? 'text-stone-400 bg-transparent border-transparent hover:bg-brand-card hover:text-white hover:border-brand-border'
+                      : 'text-stone-500 bg-transparent border-transparent hover:bg-stone-100'
+                }`}
+              >
+                <Users className="w-4 h-4" />
+                {t('nav.feed')}
+              </button>
+            )}
+            {isTabAllowedForUser('wearable', currentUser) && (
               <button
                 onClick={() => setCurrentTab('wearable')}
                 className={`w-full p-4 rounded-xl flex items-center gap-3.5 font-bold text-xs transition-all text-left border ${
@@ -737,7 +872,7 @@ export default function App() {
                 {t('nav.wearable')}
               </button>
             )}
-            {currentUser?.role === 'treinador' && (
+            {isTabAllowedForUser('trainer', currentUser) && (
               <button
                 onClick={() => setCurrentTab('trainer')}
                 className={`w-full p-4 rounded-xl flex items-center justify-between gap-2.5 font-bold text-xs transition-all text-left border cursor-pointer ${
@@ -763,21 +898,23 @@ export default function App() {
                 </span>
               </button>
             )}
-            <button
-              onClick={() => setCurrentTab('config')}
-              className={`w-full p-4 rounded-xl flex items-center gap-3.5 font-bold text-xs transition-all text-left border ${
-                currentTab === 'config' 
-                  ? darkMode 
-                    ? 'bg-brand-neon text-black border-transparent shadow-lg shadow-brand-neon/10 uppercase tracking-tight'
-                    : 'bg-emerald-500 text-white shadow-xl shadow-emerald-500/10 border-transparent' 
-                  : darkMode
-                    ? 'text-stone-400 bg-transparent border-transparent hover:bg-brand-card hover:text-white hover:border-brand-border'
-                    : 'text-stone-500 bg-transparent border-transparent hover:bg-stone-100'
-              }`}
-            >
-              <Settings className="w-4 h-4" />
-              {t('nav.settings')}
-            </button>
+            {isTabAllowedForUser('config', currentUser) && (
+              <button
+                onClick={() => setCurrentTab('config')}
+                className={`w-full p-4 rounded-xl flex items-center gap-3.5 font-bold text-xs transition-all text-left border ${
+                  currentTab === 'config' 
+                    ? darkMode 
+                      ? 'bg-brand-neon text-black border-transparent shadow-lg shadow-brand-neon/10 uppercase tracking-tight'
+                      : 'bg-emerald-500 text-white shadow-xl shadow-emerald-500/10 border-transparent' 
+                    : darkMode
+                      ? 'text-stone-400 bg-transparent border-transparent hover:bg-brand-card hover:text-white hover:border-brand-border'
+                      : 'text-stone-500 bg-transparent border-transparent hover:bg-stone-100'
+                }`}
+              >
+                <Settings className="w-4 h-4" />
+                {t('nav.settings')}
+              </button>
+            )}
 
             <button
               onClick={handleLogout}
@@ -803,7 +940,7 @@ export default function App() {
               exit={{ opacity: 0, y: -10 }}
               transition={{ duration: 0.2 }}
             >
-              {currentTab === 'workout' && (
+              {currentTab === 'workout' && isTabAllowedForUser('workout', currentUser) && (
                 <WorkoutGenerator 
                   user={currentUser}
                   onChangeProfile={handleUpdateUserProfile}
@@ -815,7 +952,7 @@ export default function App() {
                 />
               )}
 
-              {currentTab === 'stats' && (
+              {currentTab === 'stats' && isTabAllowedForUser('stats', currentUser) && (
                 <ProgressTracker 
                   user={currentUser}
                   logs={trainingLogs}
@@ -824,14 +961,14 @@ export default function App() {
                 />
               )}
 
-              {currentTab === 'feed' && (
+              {currentTab === 'feed' && isTabAllowedForUser('feed', currentUser) && (
                 <CommunityFeed 
                   user={currentUser}
                   darkMode={darkMode}
                 />
               )}
 
-              {currentTab === 'wearable' && (
+              {currentTab === 'wearable' && isTabAllowedForUser('wearable', currentUser) && (
                 <WearableSync 
                   stats={wearableStats}
                   onUpdateStats={(updated) => {
@@ -845,13 +982,14 @@ export default function App() {
                 />
               )}
 
-              {currentTab === 'trainer' && currentUser?.role === 'treinador' && (
+              {currentTab === 'trainer' && isTabAllowedForUser('trainer', currentUser) && (
                 <TrainerPanel 
+                  user={currentUser}
                   darkMode={darkMode}
                 />
               )}
 
-              {currentTab === 'config' && (
+              {currentTab === 'config' && isTabAllowedForUser('config', currentUser) && (
                 <SettingsPanel 
                   user={currentUser}
                   onChangeProfile={handleUpdateUserProfile}
@@ -879,8 +1017,7 @@ export default function App() {
       <footer className={`md:hidden fixed bottom-0 left-0 right-0 border-t pt-2 pb-[calc(env(safe-area-inset-bottom)+10px)] px-3 z-40 backdrop-blur-lg flex justify-around select-none transition-all ${
         darkMode ? 'bg-brand-bg/85 border-brand-border' : 'bg-white/85 border-stone-200'
       }`}>
-        {currentUser?.role !== 'treinador' && (
-          <>
+        {isTabAllowedForUser('workout', currentUser) && (
             <button
               onClick={() => setCurrentTab('workout')}
               className={`flex flex-col items-center justify-center py-1.5 px-3 rounded-2xl gap-0.5 active:scale-90 transition-transform ${
@@ -892,6 +1029,8 @@ export default function App() {
               <Dumbbell className="w-5 h-5" />
               <span className="text-[9px] font-bold uppercase tracking-tight">Treino</span>
             </button>
+        )}
+        {isTabAllowedForUser('stats', currentUser) && (
             <button
               onClick={() => setCurrentTab('stats')}
               className={`flex flex-col items-center justify-center py-1.5 px-3 rounded-2xl gap-0.5 active:scale-90 transition-transform ${
@@ -903,20 +1042,21 @@ export default function App() {
               <TrendingUp className="w-5 h-5" />
               <span className="text-[9px] font-bold uppercase tracking-tight">Evolução</span>
             </button>
-          </>
         )}
-        <button
-          onClick={() => setCurrentTab('feed')}
-          className={`flex flex-col items-center justify-center py-1.5 px-3 rounded-2xl gap-0.5 active:scale-90 transition-transform ${
-            currentTab === 'feed' 
-              ? darkMode ? 'text-brand-neon font-extrabold' : 'text-emerald-500 font-extrabold'
-              : 'text-stone-400'
-          }`}
-        >
-          <Users className="w-5 h-5" />
-          <span className="text-[9px] font-bold uppercase tracking-tight">Feed</span>
-        </button>
-        {currentUser?.role !== 'treinador' && (
+        {isTabAllowedForUser('feed', currentUser) && (
+          <button
+            onClick={() => setCurrentTab('feed')}
+            className={`flex flex-col items-center justify-center py-1.5 px-3 rounded-2xl gap-0.5 active:scale-90 transition-transform ${
+              currentTab === 'feed' 
+                ? darkMode ? 'text-brand-neon font-extrabold' : 'text-emerald-500 font-extrabold'
+                : 'text-stone-400'
+            }`}
+          >
+            <Users className="w-5 h-5" />
+            <span className="text-[9px] font-bold uppercase tracking-tight">Feed</span>
+          </button>
+        )}
+        {isTabAllowedForUser('wearable', currentUser) && (
           <button
             onClick={() => setCurrentTab('wearable')}
             className={`flex flex-col items-center justify-center py-1.5 px-2 rounded-2xl gap-0.5 active:scale-90 transition-transform ${
@@ -929,7 +1069,7 @@ export default function App() {
             <span className="text-[9px] font-bold uppercase tracking-tight">Relógio</span>
           </button>
         )}
-        {currentUser?.role === 'treinador' && (
+        {isTabAllowedForUser('trainer', currentUser) && (
           <button
             onClick={() => setCurrentTab('trainer')}
             className={`flex flex-col items-center justify-center py-1.5 px-2 rounded-2xl gap-0.5 active:scale-90 transition-transform ${
@@ -942,17 +1082,19 @@ export default function App() {
             <span className="text-[9px] font-bold uppercase tracking-tight">Alunos</span>
           </button>
         )}
-        <button
-          onClick={() => setCurrentTab('config')}
-          className={`flex flex-col items-center justify-center py-1.5 px-2 rounded-2xl gap-0.5 active:scale-90 transition-transform ${
-            currentTab === 'config' 
-              ? darkMode ? 'text-brand-neon font-extrabold' : 'text-emerald-500 font-extrabold'
-              : 'text-stone-400'
-          }`}
-        >
-          <Settings className="w-5 h-5" />
-          <span className="text-[9px] font-bold uppercase tracking-tight">Ajustes</span>
-        </button>
+        {isTabAllowedForUser('config', currentUser) && (
+          <button
+            onClick={() => setCurrentTab('config')}
+            className={`flex flex-col items-center justify-center py-1.5 px-2 rounded-2xl gap-0.5 active:scale-90 transition-transform ${
+              currentTab === 'config' 
+                ? darkMode ? 'text-brand-neon font-extrabold' : 'text-emerald-500 font-extrabold'
+                : 'text-stone-400'
+            }`}
+          >
+            <Settings className="w-5 h-5" />
+            <span className="text-[9px] font-bold uppercase tracking-tight">Ajustes</span>
+          </button>
+        )}
       </footer>
 
       {/* Custom Logout Confirmation Modal */}

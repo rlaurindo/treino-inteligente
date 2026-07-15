@@ -8,6 +8,7 @@ import {
   getDocs, 
   deleteDoc,
   query,
+  where,
   orderBy
 } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '../firebase';
@@ -31,6 +32,10 @@ testConnection();
 // HELPER: Sanitize email to form an elegant, clean ID helper
 export function cleanId(email: string): string {
   return email.trim().toLowerCase();
+}
+
+function cleanDocId(value: string): string {
+  return value.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, '_');
 }
 
 /**
@@ -57,6 +62,135 @@ export async function getUserProfile(email: string): Promise<UserProfile | null>
     return null;
   } catch (error) {
     handleFirestoreError(error, OperationType.GET, path);
+  }
+}
+
+/**
+ * COACH STUDENTS MODULE FUNCTIONS
+ */
+export async function upsertCoachStudent(coachEmail: string, student: any): Promise<void> {
+  const normalizedCoachEmail = cleanId(coachEmail);
+  const studentKey = student.studentId || student.id || student.email;
+  const path = `coachStudents/${cleanDocId(`${normalizedCoachEmail}_${studentKey}`)}`;
+
+  try {
+    const docRef = doc(db, 'coachStudents', cleanDocId(`${normalizedCoachEmail}_${studentKey}`));
+    await setDoc(docRef, {
+      ...student,
+      coachEmail: normalizedCoachEmail,
+      emailLower: student.email ? cleanId(student.email) : '',
+      updatedAt: new Date().toISOString()
+    }, { merge: true });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, path);
+  }
+}
+
+export async function publishPrescribedRoutineToCoachStudent(
+  coachEmail: string,
+  student: any,
+  routine: WorkoutRoutine
+): Promise<void> {
+  const normalizedCoachEmail = cleanId(coachEmail);
+  const studentKeys = Array.from(new Set([
+    student.studentId,
+    student.id,
+    student.email ? cleanId(student.email) : ''
+  ].filter(Boolean)));
+  const path = `coachStudents/${normalizedCoachEmail}_routine_aliases`;
+
+  try {
+    await Promise.all(studentKeys.map((studentKey) => {
+      const docRef = doc(db, 'coachStudents', cleanDocId(`${normalizedCoachEmail}_${studentKey}`));
+      return setDoc(docRef, {
+        ...student,
+        coachEmail: normalizedCoachEmail,
+        emailLower: student.email ? cleanId(student.email) : '',
+        prescribedRoutine: routine,
+        latestRoutineId: routine.id,
+        prescriptionPublishedAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      }, { merge: true });
+    }));
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, path);
+  }
+}
+
+export async function loadCoachStudents(coachEmail: string): Promise<any[]> {
+  const normalizedCoachEmail = cleanId(coachEmail);
+  const path = `coachStudents?coachEmail=${normalizedCoachEmail}`;
+
+  try {
+    const colRef = collection(db, 'coachStudents');
+    const q = query(colRef, where('coachEmail', '==', normalizedCoachEmail));
+    const snap = await getDocs(q);
+    const students: any[] = [];
+    snap.forEach((docSnap) => {
+      students.push(docSnap.data());
+    });
+    return students;
+  } catch (error) {
+    handleFirestoreError(error, OperationType.GET, path);
+  }
+}
+
+export async function loadPrescribedRoutineForStudent(coachEmail: string | undefined, studentKey: string, studentEmail?: string): Promise<WorkoutRoutine | null> {
+  const normalizedStudentKey = studentKey.trim();
+  const path = coachEmail
+    ? `coachStudents/${cleanDocId(`${cleanId(coachEmail)}_${normalizedStudentKey}`)}`
+    : `coachStudents?studentId=${normalizedStudentKey}`;
+
+  try {
+    if (coachEmail) {
+      const docRef = doc(db, 'coachStudents', cleanDocId(`${cleanId(coachEmail)}_${normalizedStudentKey}`));
+      const snap = await getDoc(docRef);
+      if (snap.exists()) {
+        const data = snap.data();
+        if (data.prescribedRoutine) {
+          return data.prescribedRoutine as WorkoutRoutine;
+        }
+      }
+    }
+
+    const colRef = collection(db, 'coachStudents');
+    const byStudentId = query(colRef, where('studentId', '==', normalizedStudentKey));
+    const snap = await getDocs(byStudentId);
+    let routine: WorkoutRoutine | null = null;
+    snap.forEach((docSnap) => {
+      const data = docSnap.data();
+      if (!routine && data.prescribedRoutine) {
+        routine = data.prescribedRoutine as WorkoutRoutine;
+      }
+    });
+    if (routine) return routine;
+
+    if (studentEmail) {
+      const byEmail = query(colRef, where('emailLower', '==', cleanId(studentEmail)));
+      const emailSnap = await getDocs(byEmail);
+      emailSnap.forEach((docSnap) => {
+        const data = docSnap.data();
+        if (!routine && data.prescribedRoutine) {
+          routine = data.prescribedRoutine as WorkoutRoutine;
+        }
+      });
+    }
+
+    return routine;
+  } catch (error) {
+    handleFirestoreError(error, OperationType.GET, path);
+  }
+}
+
+export async function deleteCoachStudent(coachEmail: string, studentKey: string): Promise<void> {
+  const normalizedCoachEmail = cleanId(coachEmail);
+  const path = `coachStudents/${cleanDocId(`${normalizedCoachEmail}_${studentKey}`)}`;
+
+  try {
+    const docRef = doc(db, 'coachStudents', cleanDocId(`${normalizedCoachEmail}_${studentKey}`));
+    await deleteDoc(docRef);
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, path);
   }
 }
 
@@ -180,6 +314,63 @@ export async function loadNotificationSettings(userEmail: string): Promise<Notif
     return null;
   } catch (error) {
     handleFirestoreError(error, OperationType.GET, path);
+  }
+}
+
+export async function createAppNotification(userEmail: string, notification: {
+  id?: string;
+  type: string;
+  title: string;
+  message: string;
+  routineId?: string;
+  coachEmail?: string;
+  read?: boolean;
+}): Promise<void> {
+  const normalizedEmail = cleanId(userEmail);
+  const id = notification.id || `notif-${Date.now()}`;
+  const path = `appNotifications/${cleanDocId(`${normalizedEmail}_${id}`)}`;
+
+  try {
+    const docRef = doc(db, 'appNotifications', cleanDocId(`${normalizedEmail}_${id}`));
+    await setDoc(docRef, {
+      ...notification,
+      id,
+      recipientEmail: normalizedEmail,
+      read: notification.read ?? false,
+      createdAt: new Date().toISOString()
+    }, { merge: true });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, path);
+  }
+}
+
+export async function queueWorkoutPublishedEmail(params: {
+  toEmail: string;
+  studentName: string;
+  coachEmail: string;
+  routineTitle: string;
+  routineId: string;
+}): Promise<void> {
+  const id = `workout-email-${Date.now()}-${cleanDocId(params.toEmail)}`;
+  const path = `mailQueue/${id}`;
+
+  try {
+    const docRef = doc(db, 'mailQueue', id);
+    await setDoc(docRef, {
+      id,
+      type: 'workout_published',
+      status: 'pending',
+      toEmail: cleanId(params.toEmail),
+      studentName: params.studentName,
+      coachEmail: cleanId(params.coachEmail),
+      subject: 'O seu treino foi publicado no Treino Inteligente',
+      message: `Olá ${params.studentName}, o seu Personal Trainer publicou o treino "${params.routineTitle}". Aceda à aplicação para consultar a sua rotina.`,
+      routineTitle: params.routineTitle,
+      routineId: params.routineId,
+      createdAt: new Date().toISOString()
+    }, { merge: true });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, path);
   }
 }
 

@@ -24,45 +24,7 @@ export default function CommunityFeed({ user, darkMode }: CommunityFeedProps) {
         if (dbPosts && dbPosts.length > 0) {
           setFeedItems(dbPosts.sort((a, b) => b.id.localeCompare(a.id)));
         } else {
-          const defaultSeeds: Achievement[] = [
-            {
-              id: 'ach-1',
-              userName: 'Marcos de Souza',
-              userAvatar: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=80&q=80',
-              type: 'streak',
-              title: 'Monstro do Streak!',
-              description: 'Marco completou 15 dias seguidos gerando e executando treinos personalizados de hipertrofia.',
-              timestamp: 'Há 5 minutos',
-              likes: 24,
-              likedByUser: false,
-            },
-            {
-              id: 'ach-2',
-              userName: 'Isabela Rocha',
-              userAvatar: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=80&q=80',
-              type: 'heavy_lift',
-              title: 'Novo Recorde Pessoal',
-              description: 'Lifting volumétrico alcançou 140kg totais no Supino Inclinado com Halteres!',
-              timestamp: 'Há 1 hora',
-              likes: 42,
-              likedByUser: true,
-            },
-            {
-              id: 'ach-3',
-              userName: 'Júlia Mendes',
-              userAvatar: 'https://images.unsplash.com/photo-1438761681033-6461ffad8d80?auto=format&fit=crop&w=80&q=80',
-              type: 'workout_completed',
-              title: 'Treino de Pernas Concluído',
-              description: 'Completou a rotina Avançada de Membros Inferiores gerada pela IA em 52 minutos!',
-              timestamp: 'Há 4 horas',
-              likes: 18,
-              likedByUser: false,
-            }
-          ];
-          for (const item of defaultSeeds) {
-            await createAchievement(item);
-          }
-          setFeedItems(defaultSeeds);
+          setFeedItems([]);
         }
       } catch (err) {
         console.error('Error fetching achievements:', err);

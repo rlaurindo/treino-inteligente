@@ -11,6 +11,9 @@ export interface UserProfile {
   accessCount?: number; // total times logged in / sessions opened
   subscribedPlan?: string;
   subscribedPrice?: string;
+  coachEmail?: string;
+  coachName?: string;
+  coachLinked?: boolean;
   age?: number;              // idade do aluno
   weight?: number;           // peso do aluno (kg)
   height?: number;           // altura do aluno (cm)
