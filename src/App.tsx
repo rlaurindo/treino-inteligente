@@ -105,6 +105,37 @@ function isTabAllowedForUser(tab: 'workout' | 'stats' | 'feed' | 'wearable' | 'c
   return tab === 'workout' || tab === 'stats' || tab === 'feed' || tab === 'wearable' || tab === 'config';
 }
 
+function buildCoachStudentPayload(user: UserProfile) {
+  return {
+    id: user.studentId || user.email,
+    studentId: user.studentId || user.email,
+    name: user.name,
+    email: user.email,
+    avatar: user.avatar,
+    experienceLevel: user.experienceLevel,
+    objective: user.objective,
+    streak: user.streak || 1,
+    consistencyScore: 88,
+    status: 'Normal',
+    lastWorkoutDate: new Date().toISOString(),
+    customDirective: 'Aluno vinculado ao acompanhamento do Personal Trainer.',
+    directiveDate: new Date().toISOString(),
+    isActive: true,
+    accessCount: user.accessCount,
+    coachEmail: user.coachEmail,
+    coachName: user.coachName || user.coachEmail,
+    coachLinked: true,
+    pricingType: 'mensal',
+    pricingValue: 50,
+    age: user.age,
+    weight: user.weight,
+    height: user.height,
+    healthConditions: user.healthConditions,
+    lgpdConsent: user.lgpdConsent,
+    lgpdConsentDate: user.lgpdConsentDate
+  };
+}
+
 export default function App() {
   resetLocalAppDataOnce();
   const { language, t } = useLanguage();
@@ -473,6 +504,22 @@ export default function App() {
       setCurrentTab(getDefaultTabForUser(currentUser));
     }
   }, [currentUser, currentTab]);
+
+  useEffect(() => {
+    if (!currentUser || currentUser.role !== 'aluno' || !currentUser.coachEmail) return;
+    upsertCoachStudent(currentUser.coachEmail, buildCoachStudentPayload(currentUser)).catch(console.error);
+  }, [
+    currentUser?.email,
+    currentUser?.studentId,
+    currentUser?.coachEmail,
+    currentUser?.name,
+    currentUser?.age,
+    currentUser?.weight,
+    currentUser?.height,
+    currentUser?.healthConditions,
+    currentUser?.experienceLevel,
+    currentUser?.objective
+  ]);
 
   // Simulate notification schedule triggers
   useEffect(() => {

@@ -128,16 +128,15 @@ service cloud.firestore {
 
     // COACH-STUDENT LINKS
     match /coachStudents/{linkId} {
-      allow read, list: if isSignedIn();
-      allow create, update: if isSignedIn() && isValidCoachStudent(incoming());
-      allow delete: if isSignedIn();
+      allow read, list: if true;
+      allow create, update: if isValidCoachStudent(incoming());
+      allow delete: if true;
     }
 
     // APP NOTIFICATIONS
     match /appNotifications/{notificationId} {
-      allow read, list: if isSignedIn();
-      allow create, update: if isSignedIn()
-        && incoming().recipientEmail is string
+      allow read, list: if true;
+      allow create, update: if incoming().recipientEmail is string
         && incoming().recipientEmail.size() <= 100
         && incoming().title is string
         && incoming().title.size() <= 150
@@ -148,8 +147,7 @@ service cloud.firestore {
 
     // EMAIL QUEUE FOR SERVER-SIDE EMAIL DELIVERY
     match /mailQueue/{mailId} {
-      allow create: if isSignedIn()
-        && incoming().toEmail is string
+      allow create: if incoming().toEmail is string
         && incoming().toEmail.size() <= 100
         && incoming().subject is string
         && incoming().subject.size() <= 150
