@@ -340,10 +340,63 @@ export default function TrainerPanel({ user, darkMode }: TrainerPanelProps) {
   const [inviteName, setInviteName] = useState('');
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteLevel, setInviteLevel] = useState<'Iniciante' | 'Intermediário' | 'Avançado'>('Iniciante');
-  const [generatedInviteUrl, setGeneratedInviteUrl] = useState<string | null>(null);
-  const [copiedInviteLink, setCopiedInviteLink] = useState(false);
+  const [, setGeneratedInviteUrl] = useState<string | null>(null);
+  const [isSendingInvite, setIsSendingInvite] = useState(false);
+  const [inviteSendStatus, setInviteSendStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [showInviteSection, setShowInviteSection] = useState(false);
   const trainerEmail = user.email?.trim().toLowerCase() || '';
+
+  const handleSendInviteEmail = async () => {
+    if (!trainerEmail) {
+      setInviteSendStatus({ type: 'error', message: 'Sessao do Personal sem email. Faca login novamente antes de enviar convite.' });
+      return;
+    }
+
+    const email = inviteEmail.trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      setInviteSendStatus({ type: 'error', message: 'Informe um email valido para o aluno.' });
+      return;
+    }
+
+    const studentName = inviteName.trim() || email.split('@')[0];
+    const randId = `STU-${Math.floor(1000 + Math.random() * 9000)}`;
+    const inviteUrl = `${window.location.origin}${window.location.pathname}?ref_coach=${encodeURIComponent(trainerEmail)}&student_name=${encodeURIComponent(studentName)}&student_email=${encodeURIComponent(email)}&student_id=${encodeURIComponent(randId)}&student_level=${encodeURIComponent(inviteLevel)}`;
+
+    setIsSendingInvite(true);
+    setInviteSendStatus(null);
+    setGeneratedInviteUrl(inviteUrl);
+
+    try {
+      const response = await fetch('/api/invitations/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          toEmail: email,
+          studentName,
+          coachEmail: trainerEmail,
+          coachName: user.name || trainerEmail,
+          inviteUrl,
+          level: inviteLevel
+        })
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload.error || 'Nao foi possivel enviar o convite por email.');
+      }
+
+      setInviteSendStatus({
+        type: 'success',
+        message: `Convite enviado para ${email}. Quando o aluno aceitar e concluir o cadastro, ele ficara vinculado ao seu painel.`
+      });
+    } catch (error) {
+      setInviteSendStatus({
+        type: 'error',
+        message: error instanceof Error ? error.message : 'Nao foi possivel enviar o convite por email.'
+      });
+    } finally {
+      setIsSendingInvite(false);
+    }
+  };
 
   useEffect(() => {
     if (!trainerEmail.trim()) return;
@@ -2215,10 +2268,10 @@ export default function TrainerPanel({ user, darkMode }: TrainerPanelProps) {
                   darkMode ? 'text-brand-neon' : 'text-emerald-650'
                 }`}>
                   <UserPlus className="w-4 h-4" />
-                  Gerador de Link de Convite Único
+                  Enviar Convite por Email
                 </h3>
                 <p className="text-[11px] text-stone-400">
-                  Gere um convite exclusivo de registo para enviar aos seus alunos. Ao acederem, as contas deles ficarão vinculadas diretamente ao seu painel em tempo real.
+                  Informe o email do aluno. A app envia um convite com link unico e, quando o aluno aceitar, a conta fica vinculada ao seu painel.
                 </p>
               </div>
               
@@ -2240,7 +2293,7 @@ export default function TrainerPanel({ user, darkMode }: TrainerPanelProps) {
                       : 'bg-emerald-500 text-white border-transparent hover:bg-emerald-600'
                 }`}
               >
-                {showInviteSection ? 'Minimizar Painel' : 'Abrir Painel de Convites'}
+                {showInviteSection ? 'Minimizar Painel' : 'Enviar Convite'}
               </button>
             </div>
 
@@ -2273,7 +2326,7 @@ export default function TrainerPanel({ user, darkMode }: TrainerPanelProps) {
 
                   <div className="space-y-1">
                     <label className="text-[9px] font-bold uppercase tracking-widest text-stone-400">
-                      E-mail do Aluno (Opcional)
+                      Email do Aluno
                     </label>
                     <input
                       type="email"
@@ -2317,16 +2370,8 @@ export default function TrainerPanel({ user, darkMode }: TrainerPanelProps) {
                 <div className="flex flex-col sm:flex-row gap-3 pt-2">
                   <button
                     type="button"
-                    onClick={() => {
-                      if (!trainerEmail) {
-                        alert('Sessão do Personal sem email. Faça login novamente antes de gerar o link do aluno.');
-                        return;
-                      }
-                      const randId = `STU-${Math.floor(1000 + Math.random() * 9000)}`;
-                      // Generate complete unique invitation link URL
-                      const url = `${window.location.origin}${window.location.pathname}?ref_coach=${encodeURIComponent(trainerEmail)}&student_name=${encodeURIComponent(inviteName.trim())}&student_email=${encodeURIComponent(inviteEmail.trim())}&student_id=${encodeURIComponent(randId)}&student_level=${encodeURIComponent(inviteLevel)}`;
-                      setGeneratedInviteUrl(url);
-                    }}
+                    onClick={handleSendInviteEmail}
+                    disabled={isSendingInvite}
                     className={`px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider cursor-pointer transition-all flex items-center justify-center gap-1.5 active:scale-95 border ${
                       darkMode 
                         ? 'bg-brand-neon text-black border-transparent hover:bg-white font-black' 
@@ -2334,7 +2379,7 @@ export default function TrainerPanel({ user, darkMode }: TrainerPanelProps) {
                     }`}
                   >
                     <Sparkles className="w-3.5 h-3.5" />
-                    Gerar Link de Convite Sincronizável
+                    {isSendingInvite ? 'Enviando Convite...' : 'Enviar Convite por Email'}
                   </button>
 
                   <button
@@ -2344,6 +2389,7 @@ export default function TrainerPanel({ user, darkMode }: TrainerPanelProps) {
                       setInviteEmail('');
                       setInviteLevel('Iniciante');
                       setGeneratedInviteUrl(null);
+                      setInviteSendStatus(null);
                     }}
                     className={`px-3 py-2 text-xs font-black uppercase tracking-wider rounded-xl transition-all border ${
                       darkMode 
@@ -2354,72 +2400,20 @@ export default function TrainerPanel({ user, darkMode }: TrainerPanelProps) {
                     Limpar Campos
                   </button>
                 </div>
-
-                {generatedInviteUrl && (
+                {inviteSendStatus && (
                   <motion.div
                     initial={{ scale: 0.98, opacity: 0 }}
                     animate={{ scale: 1, opacity: 1 }}
-                    className={`p-4 rounded-xl border text-left space-y-2.5 relative ${
-                      darkMode ? 'bg-[#111111] border-brand-neon/20' : 'bg-[#f6fff9] border-emerald-500/25'
+                    className={`p-4 rounded-xl border text-left ${
+                      inviteSendStatus.type === 'success'
+                        ? darkMode ? 'bg-emerald-500/10 border-emerald-500/25 text-emerald-300' : 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                        : darkMode ? 'bg-rose-500/10 border-rose-500/25 text-rose-300' : 'bg-rose-50 border-rose-200 text-rose-700'
                     }`}
                   >
-                    <div className="flex items-center justify-between">
-                      <span className={`text-[10px] font-black uppercase tracking-wider block ${
-                        darkMode ? 'text-brand-neon' : 'text-emerald-600'
-                      }`}>
-                        ✓ Link pronto para partilhar!
-                      </span>
-                      <span className="text-[9px] text-stone-500 font-mono">
-                        Mentor: {trainerEmail || 'Treinador Ativo'}
-                      </span>
-                    </div>
-
-                    <div className="flex gap-2">
-                      <input
-                        type="text"
-                        readOnly
-                        value={generatedInviteUrl}
-                        className={`flex-1 px-3.5 py-2 font-mono text-[10px] rounded-xl border focus:outline-none focus:ring-0 ${
-                          darkMode 
-                            ? 'bg-zinc-950/70 border-zinc-800 text-stone-300' 
-                            : 'bg-stone-100 border-stone-200 text-stone-600'
-                        }`}
-                      />
-                      <button
-                        type="button"
-                        onClick={() => {
-                          navigator.clipboard.writeText(generatedInviteUrl).then(() => {
-                            setCopiedInviteLink(true);
-                            setTimeout(() => setCopiedInviteLink(false), 2500);
-                          }).catch(() => {
-                            alert(`Por favor, copie o seguinte link manualmente:\n\n${generatedInviteUrl}`);
-                          });
-                        }}
-                        className={`px-4 rounded-xl text-xs font-bold uppercase tracking-wider transition-all active:scale-95 cursor-pointer border flex items-center justify-center gap-1 shrink-0 ${
-                          copiedInviteLink
-                            ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
-                            : darkMode
-                              ? 'bg-brand-neon text-black border-transparent hover:bg-white'
-                              : 'bg-emerald-500 text-white border-transparent hover:bg-emerald-600'
-                        }`}
-                      >
-                        {copiedInviteLink ? (
-                          <>
-                            <Check className="w-3.5 h-3.5" />
-                            Copiado!
-                          </>
-                        ) : (
-                          <>
-                            <Copy className="w-3.5 h-3.5" />
-                            Copiar Link
-                          </>
-                        )}
-                      </button>
-                    </div>
-
-                    <p className="text-[10px] text-stone-400 leading-normal">
-                      Quando o aluno concluir o registo através deste link, ele acederá diretamente à aplicação de forma gratuita, e os seus dados biográficos serão registados no seu painel de Controle de Alunos automaticamente!
-                    </p>
+                    <span className="text-[10px] font-black uppercase tracking-wider block mb-1">
+                      {inviteSendStatus.type === 'success' ? 'Convite enviado' : 'Convite nao enviado'}
+                    </span>
+                    <p className="text-xs leading-relaxed">{inviteSendStatus.message}</p>
                   </motion.div>
                 )}
               </motion.div>
@@ -3086,3 +3080,7 @@ export default function TrainerPanel({ user, darkMode }: TrainerPanelProps) {
     </div>
   );
 }
+
+
+
+

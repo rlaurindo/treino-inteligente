@@ -13,6 +13,19 @@ const PORT = Number(process.env.PORT) || 3000;
 
 app.use(express.json());
 
+function isValidEmail(value: string) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+}
+
+function escapeHtml(value: string) {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
 // Initialize Gemini Client safely
 let ai: GoogleGenAI | null = null;
 if (process.env.GEMINI_API_KEY) {
@@ -316,6 +329,87 @@ Assegure-se de que cada exercício de retorno possua a propriedade "day" indican
     const fallbackWorkout = getLocalFallbackWorkout(experienceLevel, objective, routineDays);
     return res.json(fallbackWorkout);
   }
+});
+
+app.post("/api/invitations/send", async (req, res) => {
+  const { toEmail, studentName, coachEmail, coachName, inviteUrl, level } = req.body || {};
+
+  if (!toEmail || !isValidEmail(String(toEmail))) {
+    return res.status(400).json({ error: "Email do aluno inválido." });
+  }
+  if (!coachEmail || !isValidEmail(String(coachEmail))) {
+    return res.status(400).json({ error: "Email do Personal Trainer inválido." });
+  }
+  if (!inviteUrl || typeof inviteUrl !== "string" || !inviteUrl.startsWith("http")) {
+    return res.status(400).json({ error: "Link de convite inválido." });
+  }
+
+  const resendApiKey = process.env.RESEND_API_KEY;
+  const fromEmail = process.env.RESEND_FROM_EMAIL || process.env.INVITE_EMAIL_FROM || "Treino Inteligente <onboarding@resend.dev>";
+
+  if (!resendApiKey) {
+    console.warn("[Convites] RESEND_API_KEY não configurada. Email não enviado.");
+    return res.status(503).json({
+      error: "Serviço de email não configurado. Configure RESEND_API_KEY no Render.",
+      code: "EMAIL_NOT_CONFIGURED"
+    });
+  }
+
+  const cleanStudentName = String(studentName || String(toEmail).split("@")[0]).trim();
+  const cleanCoachName = String(coachName || coachEmail).trim();
+  const safeUrl = escapeHtml(inviteUrl);
+
+  const html = `
+    <div style="font-family:Arial,sans-serif;background:#050505;color:#f5f5f5;padding:28px;border-radius:16px;max-width:560px;margin:auto">
+      <h1 style="margin:0 0 12px;color:#b6ff00;font-size:24px">Convite Treino Inteligente</h1>
+      <p style="line-height:1.55;color:#ddd">Olá ${escapeHtml(cleanStudentName)},</p>
+      <p style="line-height:1.55;color:#ddd">
+        O Personal Trainer <strong>${escapeHtml(cleanCoachName)}</strong> convidou você para fazer parte do acompanhamento dele no Treino Inteligente.
+      </p>
+      <p style="line-height:1.55;color:#ddd">
+        Ao clicar no botão abaixo e concluir o cadastro, a sua conta ficará vinculada automaticamente ao perfil do Personal.
+      </p>
+      <p style="margin:24px 0">
+        <a href="${safeUrl}" target="_blank" style="background:#b6ff00;color:#050505;text-decoration:none;font-weight:800;padding:13px 18px;border-radius:12px;display:inline-block">
+          Aceitar convite e criar conta
+        </a>
+      </p>
+      <p style="font-size:12px;color:#aaa;line-height:1.45">
+        Nível recomendado: ${escapeHtml(String(level || "Iniciante"))}<br />
+        Se o botão não funcionar, copie e cole este link no navegador:<br />
+        <span style="word-break:break-all;color:#d8ff66">${safeUrl}</span>
+      </p>
+    </div>
+  `;
+
+  const response = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${resendApiKey}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      from: fromEmail,
+      to: [String(toEmail).trim().toLowerCase()],
+      subject: "Convite para o Treino Inteligente",
+      html
+    })
+  });
+
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    console.error("[Convites] Falha no envio via Resend:", payload);
+    return res.status(502).json({
+      error: "Falha ao enviar email de convite.",
+      details: payload
+    });
+  }
+
+  return res.json({
+    success: true,
+    message: "Convite enviado por email com sucesso.",
+    emailId: payload.id
+  });
 });
 
 // --- ENPOINTS DE PAGAMENTO MB WAY E WEBHOOK ---
